@@ -1,9 +1,9 @@
 # Strut
 
-A personal finance tracker — bills, cards, festival/layaway installment plans,
-bank accounts, cash-flow forecasting, and spending analytics. Built with React
-and Vite, deployed for free on GitHub Pages, synced across devices via
-Firebase.
+A personal finance tracker — bills, cards, layaway installment plans
+(festivals, flex pay, and other financed purchases), bank accounts,
+cash-flow forecasting, and spending analytics. Built with React and Vite,
+deployed for free on GitHub Pages, synced across devices via Firebase.
 
 **Live app:** https://howlhouse.github.io/Strut/
 

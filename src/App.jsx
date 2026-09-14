@@ -4,7 +4,9 @@ import {
 } from "recharts";
 import {
   Plus, Trash2, X, Check, LayoutDashboard, Receipt, Ticket, Wallet, Pencil, ExternalLink, Sparkles, Eraser, BarChart3, Landmark, TrendingUp,
+  Settings as SettingsIcon, Sun, Moon, Monitor, Bell, PanelLeftClose, PanelLeftOpen, Menu,
 } from "lucide-react";
+import "./theme.css";
 
 /* ---------------------------------- helpers ---------------------------------- */
 
@@ -108,13 +110,16 @@ function seriesStats(series) {
 const toneWord = (v) => (v == null ? "ink" : v > 0 ? "rust" : v < 0 ? "bottle" : "ink");
 const toneColor = (v) => (v == null ? "var(--ink-soft)" : v > 0 ? "var(--rust)" : v < 0 ? "var(--bottle)" : "var(--ink-soft)");
 
-const CARD_COLORS = ["#2F4A3C", "#A33D2C", "#B8925A", "#3E5C76"];
-const COLOR_BOTTLE = "#2F4A3C";
-const COLOR_BRASS = "#B8925A";
+const CARD_COLORS = ["#8B5CF6", "#F472B6", "#22B8A8", "#F5A623"];
+const COLOR_BOTTLE = "#8B5CF6";
+const COLOR_BRASS = "#F472B6";
 
 
 
-const DEFAULT_DATA = { cards: [], bills: [], billPayments: {}, layaways: [], cardTransactions: [], bankAccounts: [], incomes: [] };
+const DEFAULT_DATA = {
+  cards: [], bills: [], billPayments: {}, layaways: [], cardTransactions: [], bankAccounts: [], incomes: [],
+  settings: { remindersEnabled: true, reminderDays: 14 },
+};
 
 // A "charge" always increases what a credit card owes, but decreases what's
 // left in a debit/checking account. A "payment" (paying down a card, or
@@ -396,10 +401,22 @@ function computeCashForecast(data, accountIds, horizonDays) {
 
 /* ---------------------------------- app ---------------------------------- */
 
-export default function App({ storage, canLoadDemoData }) {
+export default function App({ storage, canLoadDemoData, themeMode, setThemeMode }) {
   const [data, setData] = useState(DEFAULT_DATA);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("dashboard");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem("strut-sidebar-collapsed") === "1"; } catch { return false; }
+  });
+  const toggleSidebar = () => setSidebarCollapsed((v) => {
+    const next = !v;
+    try { localStorage.setItem("strut-sidebar-collapsed", next ? "1" : "0"); } catch { /* ignore */ }
+    return next;
+  });
+  // On phones/tablets the sidebar becomes an off-canvas drawer instead of a
+  // rail — this tracks whether that drawer is open, independent of the
+  // desktop full/collapsed-rail preference above.
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -553,6 +570,12 @@ export default function App({ storage, canLoadDemoData }) {
   const addIncome = (income) => update((d) => { d.incomes.push({ id: uid(), ...income }); return d; });
   const deleteIncome = (id) => update((d) => { d.incomes = d.incomes.filter((i) => i.id !== id); return d; });
 
+  /* ---- settings actions ---- */
+  const updateSettings = (patch) => update((d) => {
+    d.settings = { ...(d.settings || DEFAULT_DATA.settings), ...patch };
+    return d;
+  });
+
   const loadDemo = () => setData(buildDemoData());
   const clearAll = () => {
     if (window.confirm("Clear all data and start fresh? This can't be undone.")) setData(structuredClone(DEFAULT_DATA));
@@ -561,34 +584,52 @@ export default function App({ storage, canLoadDemoData }) {
   const nav = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "bills", label: "Bills", icon: Receipt },
-    { id: "layaway", label: "Festival layaway", icon: Ticket },
+    { id: "layaway", label: "Layaway Payments", icon: Ticket },
     { id: "cards", label: "Card ledgers", icon: Wallet },
     { id: "accounts", label: "Bank Accounts", icon: Landmark },
     { id: "forecast", label: "Forecast", icon: TrendingUp },
     { id: "analytics", label: "Analytics", icon: BarChart3 },
+    { id: "settings", label: "Settings", icon: SettingsIcon },
   ];
+
+  const goTo = (id) => {
+    setTab(id);
+    setMobileMenuOpen(false);
+  };
 
   return (
     <div className="app">
-      <Style />
-      <aside className="sidebar">
+      <div className="mobile-topbar">
+        <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(true)} title="Open menu" aria-label="Open menu">
+          <Menu size={20} strokeWidth={1.75} />
+        </button>
+        <span className="brand-mark">S</span>
+        <span className="brand-name">Strut</span>
+      </div>
+
+      {mobileMenuOpen && <div className="sidebar-backdrop" onClick={() => setMobileMenuOpen(false)} />}
+
+      <aside className={"sidebar" + (sidebarCollapsed ? " collapsed" : "") + (mobileMenuOpen ? " mobile-open" : "")}>
         <div className="brand">
-          <span className="brand-mark">§</span>
+          <span className="brand-mark">S</span>
           <span className="brand-name">Strut</span>
+          <button className="sidebar-close" onClick={() => setMobileMenuOpen(false)} title="Close menu" aria-label="Close menu">
+            <X size={18} />
+          </button>
         </div>
         <nav>
           {nav.map((n) => (
-            <button key={n.id} className={"nav-item" + (tab === n.id ? " active" : "")} onClick={() => setTab(n.id)}>
+            <button key={n.id} className={"nav-item" + (tab === n.id ? " active" : "")} onClick={() => goTo(n.id)} title={n.label}>
               <n.icon size={16} strokeWidth={1.75} />
-              <span>{n.label}</span>
+              <span className="nav-label">{n.label}</span>
             </button>
           ))}
         </nav>
         <div className="sidebar-footer">
-          {canLoadDemoData && (
-            <button className="footer-link" onClick={loadDemo}><Sparkles size={13} /> Load demo data</button>
-          )}
-          <button className="footer-link" onClick={clearAll}><Eraser size={13} /> Clear all data</button>
+          <button className="sidebar-toggle" onClick={toggleSidebar} title={sidebarCollapsed ? "Expand menu" : "Collapse menu"}>
+            {sidebarCollapsed ? <PanelLeftOpen size={16} strokeWidth={1.75} /> : <PanelLeftClose size={16} strokeWidth={1.75} />}
+            <span className="nav-label">{sidebarCollapsed ? "Expand" : "Collapse"}</span>
+          </button>
         </div>
       </aside>
 
@@ -622,6 +663,17 @@ export default function App({ storage, canLoadDemoData }) {
           <ForecastPage data={data} addIncome={addIncome} deleteIncome={deleteIncome} />
         )}
         {tab === "analytics" && <AnalyticsPage data={data} />}
+        {tab === "settings" && (
+          <SettingsPage
+            settings={data.settings || DEFAULT_DATA.settings}
+            updateSettings={updateSettings}
+            themeMode={themeMode}
+            setThemeMode={setThemeMode}
+            canLoadDemoData={canLoadDemoData}
+            loadDemo={loadDemo}
+            clearAll={clearAll}
+          />
+        )}
       </main>
     </div>
   );
@@ -631,7 +683,9 @@ export default function App({ storage, canLoadDemoData }) {
 
 function Dashboard({ data, cardName, cardColor, toggleBillPaid, toggleInstallmentPaid, loadDemo, canLoadDemoData, addTransaction }) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const horizon = new Date(today); horizon.setDate(horizon.getDate() + 14);
+  const reminderDays = data.settings?.reminderDays ?? 14;
+  const remindersEnabled = data.settings?.remindersEnabled !== false;
+  const horizon = new Date(today); horizon.setDate(horizon.getDate() + reminderDays);
   const [modalOpen, setModalOpen] = useState(false);
   const empty = isEmptyData(data);
 
@@ -674,7 +728,7 @@ function Dashboard({ data, cardName, cardColor, toggleBillPaid, toggleInstallmen
         <PageHeader title="Dashboard" subtitle={fmtDateLong(today)} />
         <Panel title="Nothing here yet">
           <p className="empty" style={{ marginBottom: canLoadDemoData ? 12 : 0 }}>
-            Add your own bills, cards and festivals from the tabs on the left
+            Add your own bills, cards and layaway plans from the tabs on the left
             {canLoadDemoData ? " — or load sample content to see how the dashboard and layaway tiles work." : "."}
           </p>
           {canLoadDemoData && (
@@ -703,33 +757,37 @@ function Dashboard({ data, cardName, cardColor, toggleBillPaid, toggleInstallmen
         <Stat label="Active layaways" value={activeLayaways} tone="brass" />
       </div>
 
-      <Panel title="Due in the next two weeks">
-        {upcoming.length === 0 ? (
-          <Empty text="Nothing due in the next 14 days. Add a bill or a festival payment to start tracking." />
-        ) : (
-          <div className="ledger">
-            {upcoming.map((item, idx) => (
-              <div className="ledger-row" key={idx}>
-                <span className="dot" style={{ background: item.cardId ? cardColor(item.cardId) : "var(--line)" }} />
-                <span className="col-name">{item.name}</span>
-                <span className="col-card">{item.cardId ? cardName(item.cardId) : "no card set"}</span>
-                <span className="col-date" style={{ color: item.due < today ? "var(--rust)" : "var(--ink-soft)" }}>{fmtDate(item.due)}</span>
-                <span className="col-amount">{money(item.amount)}</span>
-                <button
-                  className="btn btn-ghost btn-small"
-                  onClick={() =>
-                    item.kind === "bill"
-                      ? toggleBillPaid(item.ref, item.key, true, todayISO(), item.cardId)
-                      : toggleInstallmentPaid(item.fest, item.inst, true, todayISO())
-                  }
-                >
-                  <Check size={14} /> Mark paid
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </Panel>
+      {remindersEnabled ? (
+        <Panel title={`Due in the next ${reminderDays} days`}>
+          {upcoming.length === 0 ? (
+            <Empty text={`Nothing due in the next ${reminderDays} days. Add a bill or a layaway payment to start tracking.`} />
+          ) : (
+            <div className="ledger">
+              {upcoming.map((item, idx) => (
+                <div className="ledger-row" key={idx}>
+                  <span className="dot" style={{ background: item.cardId ? cardColor(item.cardId) : "var(--line)" }} />
+                  <span className="col-name">{item.name}</span>
+                  <span className="col-card">{item.cardId ? cardName(item.cardId) : "no card set"}</span>
+                  <span className="col-date" style={{ color: item.due < today ? "var(--rust)" : "var(--ink-soft)" }}>{fmtDate(item.due)}</span>
+                  <span className="col-amount">{money(item.amount)}</span>
+                  <button
+                    className="btn btn-ghost btn-small"
+                    onClick={() =>
+                      item.kind === "bill"
+                        ? toggleBillPaid(item.ref, item.key, true, todayISO(), item.cardId)
+                        : toggleInstallmentPaid(item.fest, item.inst, true, todayISO())
+                    }
+                  >
+                    <Check size={14} /> Mark paid
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      ) : (
+        <p className="page-footnote">Dashboard reminders are turned off. Turn them back on in <strong>Settings</strong>.</p>
+      )}
 
       {modalOpen && (
         <Modal title="Add transaction" onClose={() => setModalOpen(false)}>
@@ -914,16 +972,16 @@ function LayawayPage({ data, addFestival, deleteFestival, updateFestivalMeta, to
 
   return (
     <div>
-      <PageHeader title="Festival layaway" subtitle="Installment plans for festival tickets and gear" action={
+      <PageHeader title="Layaway Payments" subtitle="Installment plans for festivals, flex pay, and other financed items" action={
         <button className="btn btn-primary" onClick={() => setAdding((v) => !v)}>
-          {adding ? <X size={15} /> : <Plus size={15} />} {adding ? "Close" : "Add festival"}
+          {adding ? <X size={15} /> : <Plus size={15} />} {adding ? "Close" : "Add plan"}
         </button>
       } />
 
       {adding && <AddFestivalForm cards={data.cards} onAdd={(f) => { addFestival(f); setAdding(false); }} />}
 
       {data.layaways.length === 0 ? (
-        <Panel title="Plans"><Empty text="No layaway plans yet. Add a festival to build a payment schedule." /></Panel>
+        <Panel title="Plans"><Empty text="No layaway plans yet. Add a festival, flex-pay purchase, or other financed item to build a payment schedule." /></Panel>
       ) : (
         <div className="tile-grid">
           {data.layaways.map((fest) => (
@@ -974,7 +1032,7 @@ function FestivalTile({ fest, cards, toggleInstallmentPaid, deleteFestival, upda
           {fest.eventDetails && <p className="details-text">{fest.eventDetails}</p>}
           {fest.ticketUrl && (
             <a className="link-row" href={fest.ticketUrl} target="_blank" rel="noopener noreferrer">
-              <ExternalLink size={13} /> Ticket manager
+              <ExternalLink size={13} /> Tracking link
             </a>
           )}
           {fest.notes && <p className="muted-text">{fest.notes}</p>}
@@ -983,7 +1041,7 @@ function FestivalTile({ fest, cards, toggleInstallmentPaid, deleteFestival, upda
       )}
 
       <div className="progress-row">
-        <div className="progress-track"><div className="progress-fill" style={{ width: `${pct}%`, background: tileColor }} /></div>
+        <div className="progress-track"><div className="progress-fill" style={{ width: `${pct}%`, backgroundImage: "var(--rainbow)" }} /></div>
         <span className="progress-label">{money(paidTotal)} of {money(total)} paid</span>
       </div>
 
@@ -1069,9 +1127,9 @@ function FestivalMetaForm({ fest, cards, onSave }) {
   return (
     <form className="edit-form" onSubmit={submit}>
       <div className="form-grid">
-        <Field label="Festival name"><input className="input" value={festivalName} onChange={(e) => setFestivalName(e.target.value)} /></Field>
+        <Field label="Item or plan name"><input className="input" value={festivalName} onChange={(e) => setFestivalName(e.target.value)} /></Field>
         <Field label="Item"><input className="input" value={itemName} onChange={(e) => setItemName(e.target.value)} /></Field>
-        <Field label="Ticket manager URL"><input className="input" value={ticketUrl} onChange={(e) => setTicketUrl(e.target.value)} placeholder="https://…" /></Field>
+        <Field label="Tracking link"><input className="input" value={ticketUrl} onChange={(e) => setTicketUrl(e.target.value)} placeholder="https://…" /></Field>
         <Field label="Card">
           <select className="input" value={cardId} onChange={(e) => setCardId(e.target.value)}>
             <option value="">no card</option>
@@ -1079,7 +1137,7 @@ function FestivalMetaForm({ fest, cards, onSave }) {
           </select>
         </Field>
       </div>
-      <Field label="Event details"><textarea className="input textarea" value={eventDetails} onChange={(e) => setEventDetails(e.target.value)} placeholder="Dates, venue, lineup notes…" /></Field>
+      <Field label="Details"><textarea className="input textarea" value={eventDetails} onChange={(e) => setEventDetails(e.target.value)} placeholder="Dates, vendor, plan details…" /></Field>
       <Field label="Notes"><textarea className="input textarea" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything else worth keeping track of…" /></Field>
       <button className="btn btn-primary btn-small" type="submit" style={{ marginTop: 4 }}><Check size={14} /> Save details</button>
     </form>
@@ -1144,9 +1202,9 @@ function AddFestivalForm({ cards, onAdd }) {
   return (
     <form className="panel form-panel" onSubmit={submit}>
       <div className="form-grid">
-        <Field label="Festival name"><input className="input" value={festivalName} onChange={(e) => setFestivalName(e.target.value)} placeholder="e.g. Okeechobee" /></Field>
-        <Field label="Item (optional)"><input className="input" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="GA ticket, camping…" /></Field>
-        <Field label="Ticket manager URL (optional)"><input className="input" value={ticketUrl} onChange={(e) => setTicketUrl(e.target.value)} placeholder="https://…" /></Field>
+        <Field label="Item or plan name"><input className="input" value={festivalName} onChange={(e) => setFestivalName(e.target.value)} placeholder="e.g. Okeechobee, Affirm — sofa, Klarna order" /></Field>
+        <Field label="Item (optional)"><input className="input" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="GA ticket, camping, sectional couch…" /></Field>
+        <Field label="Tracking link (optional)"><input className="input" value={ticketUrl} onChange={(e) => setTicketUrl(e.target.value)} placeholder="https://…" /></Field>
         <Field label="Card">
           <select className="input" value={cardId} onChange={(e) => setCardId(e.target.value)}>
             <option value="">no card</option>
@@ -1155,7 +1213,7 @@ function AddFestivalForm({ cards, onAdd }) {
         </Field>
       </div>
 
-      <Field label="Event details (optional)"><textarea className="input textarea" value={eventDetails} onChange={(e) => setEventDetails(e.target.value)} placeholder="Dates, venue, lineup notes…" /></Field>
+      <Field label="Details (optional)"><textarea className="input textarea" value={eventDetails} onChange={(e) => setEventDetails(e.target.value)} placeholder="Dates, vendor, plan details…" /></Field>
       <Field label="Notes (optional)"><textarea className="input textarea" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything else worth keeping track of…" /></Field>
 
       <div className="segmented" style={{ margin: "14px 0 12px" }}>
@@ -1661,7 +1719,7 @@ function CashForecastChart({ series }) {
           <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--ink-soft)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} minTickGap={30} />
           <YAxis tick={{ fontSize: 11, fill: "var(--ink-soft)" }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${Math.round(v / 100) / 10}k`} width={52} />
           <Tooltip
-            contentStyle={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 4, fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 12 }}
+            contentStyle={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 8, fontFamily: "'Inter', sans-serif", fontSize: 12 }}
             formatter={(v) => [money(v), "Balance"]}
           />
           <Area type="stepAfter" dataKey="balance" stroke={COLOR_BOTTLE} strokeWidth={2} fill="url(#forecast-grad)" />
@@ -1833,7 +1891,7 @@ function TrendChart({ series, color }) {
           <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--ink-soft)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} minTickGap={20} />
           <YAxis tick={{ fontSize: 11, fill: "var(--ink-soft)" }} axisLine={false} tickLine={false} width={50} tickFormatter={(v) => `$${v}`} />
           <Tooltip
-            contentStyle={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 4, fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 12 }}
+            contentStyle={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 8, fontFamily: "'Inter', sans-serif", fontSize: 12 }}
             formatter={(v) => [money(v), "Amount"]}
           />
           <Bar dataKey="amount" fill={color} radius={[2, 2, 0, 0]} />
@@ -1912,187 +1970,98 @@ function Empty({ text }) {
   return <p className="empty">{text}</p>;
 }
 
-/* ---------------------------------- styles ---------------------------------- */
+/* ---------------------------------- settings page ---------------------------------- */
 
-function Style() {
+function SettingsPage({ settings, updateSettings, themeMode, setThemeMode, canLoadDemoData, loadDemo, clearAll }) {
+  const [reminderDaysDraft, setReminderDaysDraft] = useState(settings.reminderDays);
+
+  const saveReminderDays = () => {
+    const v = Math.min(60, Math.max(1, Number(reminderDaysDraft) || 14));
+    setReminderDaysDraft(v);
+    updateSettings({ reminderDays: v });
+  };
+
   return (
-    <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+    <div>
+      <PageHeader title="Settings" subtitle="Appearance, reminders and data" />
 
-      :root {
-        --paper: #E8EDE3;
-        --panel: #F7F5EF;
-        --ink: #1F2E23;
-        --ink-soft: #5B6B5E;
-        --bottle: #2F4A3C;
-        --rust: #A33D2C;
-        --brass: #B8925A;
-        --line: #CBD3C3;
-      }
+      <Panel title="Appearance">
+        <div className="setting-row">
+          <div>
+            <div className="setting-row-label">Theme</div>
+            <div className="setting-row-desc">Choose light, dark, or match your device's setting.</div>
+          </div>
+          <div className="segmented">
+            <button className={"segment" + (themeMode === "light" ? " active" : "")} onClick={() => setThemeMode("light")}><Sun size={13} /> Light</button>
+            <button className={"segment" + (themeMode === "dark" ? " active" : "")} onClick={() => setThemeMode("dark")}><Moon size={13} /> Dark</button>
+            <button className={"segment" + (themeMode === "system" ? " active" : "")} onClick={() => setThemeMode("system")}><Monitor size={13} /> System</button>
+          </div>
+        </div>
+      </Panel>
 
-      * { box-sizing: border-box; }
+      <Panel title="Reminders">
+        <div className="setting-row">
+          <div>
+            <div className="setting-row-label">Dashboard due-soon reminders</div>
+            <div className="setting-row-desc">Show a list of upcoming bills and layaway payments on the dashboard.</div>
+          </div>
+          <div className="setting-row-control">
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={settings.remindersEnabled !== false}
+                onChange={(e) => updateSettings({ remindersEnabled: e.target.checked })}
+              />
+              <span className="switch-track" />
+            </label>
+          </div>
+        </div>
+        {settings.remindersEnabled !== false && (
+          <div className="setting-row">
+            <div>
+              <div className="setting-row-label">Remind me this many days ahead</div>
+              <div className="setting-row-desc">How far out counts as "due soon" on the dashboard.</div>
+            </div>
+            <div className="setting-row-control">
+              <input
+                className="input input-small col-amount-input"
+                type="number"
+                min="1"
+                max="60"
+                value={reminderDaysDraft}
+                onChange={(e) => setReminderDaysDraft(e.target.value)}
+                onBlur={saveReminderDays}
+              />
+              <span className="muted-text">days</span>
+            </div>
+          </div>
+        )}
+        <p className="hint" style={{ marginTop: 12, marginBottom: 0 }}>
+          <Bell size={12} style={{ verticalAlign: -1, marginRight: 4 }} />
+          These are in-app reminders shown on the dashboard, not push or email notifications.
+        </p>
+      </Panel>
 
-      .app {
-        display: flex;
-        min-height: 100%;
-        background: var(--paper);
-        color: var(--ink);
-        font-family: 'IBM Plex Sans', sans-serif;
-        font-variant-numeric: tabular-nums;
-        overflow-x: hidden;
-      }
-
-      .sidebar {
-        width: 208px;
-        flex-shrink: 0;
-        background: var(--paper);
-        border-right: 1px solid var(--line);
-        padding: 24px 14px;
-      }
-
-      .brand {
-        display: flex;
-        align-items: baseline;
-        gap: 8px;
-        padding: 0 10px 20px;
-        margin-bottom: 12px;
-        border-bottom: 1px solid var(--line);
-      }
-      .brand-mark { font-family: 'Source Serif 4', serif; font-size: 22px; color: var(--brass); }
-      .brand-name { font-family: 'Source Serif 4', serif; font-size: 18px; font-weight: 600; letter-spacing: 0.2px; }
-
-      nav { display: flex; flex-direction: column; gap: 2px; }
-
-      .nav-item {
-        display: flex; align-items: center; gap: 10px;
-        padding: 9px 10px; border: none; background: transparent;
-        border-left: 2px solid transparent; color: var(--ink-soft);
-        font-family: inherit; font-size: 13.5px; text-align: left;
-        cursor: pointer; border-radius: 0 3px 3px 0;
-      }
-      .nav-item:hover { background: rgba(47,74,60,0.06); color: var(--ink); }
-      .nav-item.active { border-left: 2px solid var(--bottle); background: rgba(47,74,60,0.08); color: var(--ink); font-weight: 500; }
-
-      .sidebar-footer { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
-      .footer-link { display: flex; align-items: center; gap: 8px; border: none; background: transparent; color: var(--ink-soft); font-family: inherit; font-size: 12px; padding: 6px 10px; cursor: pointer; text-align: left; border-radius: 3px; }
-      .footer-link:hover { color: var(--ink); background: rgba(47,74,60,0.06); }
-
-      .main { flex: 1; min-width: 0; padding: 32px 40px 60px; max-width: 940px; }
-
-      .page-header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 22px; }
-      .page-title { font-family: 'Source Serif 4', serif; font-size: 28px; font-weight: 600; margin: 0; }
-      .page-subtitle { margin: 4px 0 0; color: var(--ink-soft); font-size: 13.5px; }
-
-      .stat-row { display: flex; gap: 1px; background: var(--line); border: 1px solid var(--line); margin-bottom: 22px; }
-      .stat { flex: 1; background: var(--panel); padding: 16px 18px; }
-      .stat-value { font-family: 'Source Serif 4', serif; font-size: 24px; font-weight: 600; }
-      .stat-label { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
-
-      .panel { background: var(--panel); border: 1px solid var(--line); padding: 18px 20px 20px; margin-bottom: 20px; }
-      .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-      .panel-title { font-family: 'Source Serif 4', serif; font-size: 16px; font-weight: 600; margin: 0; }
-
-      .tile-grid { display: flex; flex-direction: column; gap: 20px; }
-      .event-tile { background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--brass); padding: 18px 20px 20px; }
-      .tile-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
-      .tile-head-actions { display: flex; gap: 4px; }
-      .tile-sub { margin: 2px 0 0; color: var(--ink-soft); font-size: 13px; }
-      .tile-details { margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
-      .details-text { margin: 0; font-size: 13.5px; }
-      .muted-text { margin: 0; font-size: 12.5px; color: var(--ink-soft); }
-      .link-row { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--bottle); text-decoration: none; width: fit-content; }
-      .link-row:hover { text-decoration: underline; }
-
-      .ledger { display: flex; flex-direction: column; }
-      .history-change { width: 110px; font-size: 12px; }
-      .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
-      .chip { border: 1px solid var(--line); background: var(--panel); color: var(--ink-soft); font-family: inherit; font-size: 12.5px; padding: 6px 13px; border-radius: 14px; cursor: pointer; }
-      .chip:hover { border-color: var(--bottle); color: var(--ink); }
-      .chip.active { background: var(--bottle); border-color: var(--bottle); color: var(--panel); }
-      .drill-body { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); }
-      .drill-stats { display: flex; gap: 26px; margin-bottom: 14px; flex-wrap: wrap; }
-      .drill-figure { font-family: 'Source Serif 4', serif; font-size: 18px; font-weight: 600; }
-      .page-footnote { font-size: 12.5px; color: var(--ink-soft); margin-top: -6px; }
-      .ledger-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13.5px; flex-wrap: nowrap; }
-      .ledger-row.wrap { flex-wrap: wrap; row-gap: 8px; }
-      .ledger-row:first-child { border-top: none; }
-
-      .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-      .col-name { flex: 1; min-width: 120px; display: flex; align-items: center; gap: 8px; }
-      .freq-tag { font-size: 10.5px; color: var(--ink-soft); border: 1px solid var(--line); padding: 1px 6px; border-radius: 8px; }
-      .col-card { color: var(--ink-soft); font-size: 12.5px; width: 110px; }
-      .col-date { color: var(--ink-soft); width: 68px; }
-      .col-amount { width: 90px; text-align: right; font-weight: 500; }
-      .col-balance { width: 100px; text-align: right; font-weight: 600; font-family: 'Source Serif 4', serif; }
-      .check-list { display: flex; flex-direction: column; gap: 4px; }
-      .check-item { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 13.5px; }
-      .check-item input { accent-color: var(--bottle); width: 15px; height: 15px; cursor: pointer; }
-      .check-item span:first-of-type { flex: 1; }
-      .col-date-input { width: 130px; }
-      .col-amount-input { width: 90px; }
-
-      .paid-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-      .paid-toggle input { accent-color: var(--bottle); width: 15px; height: 15px; cursor: pointer; }
-      .tag { font-size: 11.5px; padding: 2px 7px; border-radius: 2px; }
-      .tag-paid { background: rgba(47,74,60,0.12); color: var(--bottle); }
-      .tag-unpaid { background: rgba(163,61,44,0.10); color: var(--rust); }
-      .tag-credit { background: rgba(47,74,60,0.12); color: var(--bottle); margin-left: 6px; }
-      .tag-debit { background: rgba(184,146,90,0.18); color: var(--brass); margin-left: 6px; }
-
-      .inline-fields { display: flex; gap: 6px; }
-      .paid-summary { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-soft); flex-wrap: wrap; max-width: 100%; }
-      .input-small { padding: 5px 6px; font-size: 12px; width: auto; max-width: 140px; }
-      select.input-small { max-width: 160px; }
-
-      .btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--bottle); background: var(--bottle); color: var(--panel); padding: 8px 14px; font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; border-radius: 3px; }
-      .btn:hover { opacity: 0.92; }
-      .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
-      .btn-small { padding: 5px 10px; font-size: 12px; }
-
-      .icon-btn { border: none; background: none; color: var(--ink-soft); cursor: pointer; padding: 4px; display: flex; border-radius: 3px; }
-      .icon-btn:hover { color: var(--rust); background: rgba(163,61,44,0.08); }
-
-      .form-panel { border-color: var(--brass); }
-      .form-panel-tight { padding: 14px 16px 16px; margin-bottom: 14px; }
-      .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px 16px; margin-bottom: 14px; }
-      .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
-      .field-label { font-size: 12px; color: var(--ink-soft); }
-      .input { border: 1px solid var(--line); background: #fff; padding: 8px 10px; font-family: inherit; font-size: 13.5px; border-radius: 3px; color: var(--ink); }
-      .input:focus { outline: 2px solid var(--brass); outline-offset: -1px; }
-      .textarea { resize: vertical; min-height: 54px; line-height: 1.5; }
-      .hint { font-size: 12px; color: var(--ink-soft); margin: -6px 0 14px; }
-
-      .edit-form { border: 1px dashed var(--line); padding: 14px 16px; margin-bottom: 14px; }
-
-      .add-row-form { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-
-      .segmented { display: flex; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; width: fit-content; }
-      .segment { border: none; background: var(--panel); padding: 6px 12px; font-size: 12px; color: var(--ink-soft); cursor: pointer; font-family: inherit; }
-      .segment + .segment { border-left: 1px solid var(--line); }
-      .segment.active { background: var(--bottle); color: var(--panel); }
-
-      .forecast-figures { display: flex; gap: 28px; margin-bottom: 14px; }
-      .figure-label { font-size: 11.5px; color: var(--ink-soft); }
-      .figure-value { font-family: 'Source Serif 4', serif; font-size: 21px; font-weight: 600; }
-
-      .progress-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-      .progress-track { flex: 1; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
-      .progress-fill { height: 100%; }
-      .progress-label { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
-
-      .empty { color: var(--ink-soft); font-size: 13.5px; padding: 10px 0; }
-
-      .modal-overlay { position: fixed; inset: 0; background: rgba(31,46,35,0.45); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 60; }
-      .modal-panel { background: var(--panel); border: 1px solid var(--line); width: 100%; max-width: 440px; padding: 20px 22px 22px; max-height: 88vh; overflow-y: auto; }
-
-      @media (max-width: 760px) {
-        .app { flex-direction: column; }
-        .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--line); padding: 14px; }
-        nav { flex-direction: row; flex-wrap: wrap; }
-        .main { padding: 22px 18px 50px; }
-        .stat-row { flex-direction: column; }
-        .col-card { display: none; }
-      }
-    `}</style>
+      <Panel title="Data">
+        <div className="setting-row" style={{ flexWrap: "wrap" }}>
+          <div>
+            <div className="setting-row-label">Sample content</div>
+            <div className="setting-row-desc">Load example bills, cards and layaway plans to explore the app.</div>
+          </div>
+          {canLoadDemoData ? (
+            <button className="btn btn-ghost btn-small" onClick={loadDemo}><Sparkles size={13} /> Load demo data</button>
+          ) : (
+            <span className="muted-text">Not available on this account.</span>
+          )}
+        </div>
+        <div className="setting-row">
+          <div>
+            <div className="setting-row-label">Reset everything</div>
+            <div className="setting-row-desc">Permanently clear all bills, cards, layaways and accounts.</div>
+          </div>
+          <button className="btn btn-ghost btn-small" onClick={clearAll}><Eraser size={13} /> Clear all data</button>
+        </div>
+      </Panel>
+    </div>
   );
 }
