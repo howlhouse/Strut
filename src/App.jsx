@@ -575,7 +575,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark">§</span>
-          <span className="brand-name">Align</span>
+          <span className="brand-name">Strut</span>
         </div>
         <nav>
           {nav.map((n) => (

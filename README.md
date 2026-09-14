@@ -1,10 +1,10 @@
-# Align
+# Strut
 
 A personal finance tracker — bills, cards, festival/layaway installment plans,
 bank accounts, cash-flow forecasting, and spending analytics. Built with React
 and Vite, deployed for free on GitHub Pages.
 
-**Live app:** https://howlhouse.github.io/Align/
+**Live app:** https://howlhouse.github.io/Strut/
 
 ## Stack
 
