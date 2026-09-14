@@ -19,13 +19,15 @@ Firebase.
 
 ## Auth & data
 
-Signing in with Google (see [`src/AuthGate.jsx`](src/AuthGate.jsx)) is open to
-any Google account, but [`firestore.rules`](firestore.rules) hard-locks all
-reads/writes to one specific owner Firebase UID — every other account gets
-zero access, not just a sandboxed empty account. Data lives in a single
-Firestore document at `users/{owner-uid}/strut/data` (see
-[`src/storage.js`](src/storage.js)). Firestore's persistent local cache keeps
-the app usable offline, syncing once you're back online.
+Strut is multi-tenant: anyone can sign in with Google (see
+[`src/AuthGate.jsx`](src/AuthGate.jsx)) and gets their own account
+automatically on first sign-in. Each user's data lives in its own Firestore
+document at `users/{their-uid}/strut/data` (see
+[`src/storage.js`](src/storage.js)), and [`firestore.rules`](firestore.rules)
+restricts every document to that same uid — no user can ever read or write
+another user's data, and no data is shared between accounts at any point.
+Firestore's persistent local cache keeps the app usable offline, syncing once
+you're back online.
 
 The Firebase config in [`src/firebase.js`](src/firebase.js) (including the
 API key) is a public client identifier, not a secret — Firebase documents

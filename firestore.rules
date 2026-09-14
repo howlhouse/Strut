@@ -2,15 +2,11 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Strut is single-owner: only the app owner's Firebase UID may read or
-    // write anything, regardless of how many other Google accounts sign in.
-    // (Sign-in itself is open to any Google account; this is what actually
-    // keeps everyone else's data access at zero.) Update OWNER_UID here if
-    // the owner's account is ever recreated.
+    // Multi-tenant: any signed-in Google account may use the app, but each
+    // user's data lives under their own uid and only that same uid may ever
+    // read or write it. No user can see or affect another user's data.
     match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null
-                          && request.auth.uid == uid
-                          && request.auth.uid == "le0NSVWjRdX0PDrMbd4UmpSzW7I3";
+      allow read, write: if request.auth != null && request.auth.uid == uid;
     }
   }
 }
