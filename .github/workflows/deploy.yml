@@ -1,7 +1,12 @@
 name: Deploy to GitHub Pages
 
+# Runs on every push to main (and builds+deploys), and also on pull requests
+# targeting main (build-only, no deploy) so the "build" status check branch
+# protection requires can actually appear on PRs instead of never running.
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -11,7 +16,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'push' && 'pages' || format('pages-pr-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
@@ -25,13 +30,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - if: github.event_name == 'push'
+        uses: actions/configure-pages@v5
+      - if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
   deploy:
     needs: build
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
