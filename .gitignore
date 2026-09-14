@@ -1,0 +1,10 @@
+node_modules
+dist
+.DS_Store
+*.local
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+.firebaserc.local
