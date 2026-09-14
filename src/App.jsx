@@ -396,7 +396,7 @@ function computeCashForecast(data, accountIds, horizonDays) {
 
 /* ---------------------------------- app ---------------------------------- */
 
-export default function App({ storage }) {
+export default function App({ storage, canLoadDemoData }) {
   const [data, setData] = useState(DEFAULT_DATA);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("dashboard");
@@ -585,14 +585,16 @@ export default function App({ storage }) {
           ))}
         </nav>
         <div className="sidebar-footer">
-          <button className="footer-link" onClick={loadDemo}><Sparkles size={13} /> Load demo data</button>
+          {canLoadDemoData && (
+            <button className="footer-link" onClick={loadDemo}><Sparkles size={13} /> Load demo data</button>
+          )}
           <button className="footer-link" onClick={clearAll}><Eraser size={13} /> Clear all data</button>
         </div>
       </aside>
 
       <main className="main">
         {tab === "dashboard" && (
-          <Dashboard data={data} cardName={cardName} cardColor={cardColor} toggleBillPaid={toggleBillPaid} toggleInstallmentPaid={toggleInstallmentPaid} loadDemo={loadDemo} addTransaction={addTransaction} />
+          <Dashboard data={data} cardName={cardName} cardColor={cardColor} toggleBillPaid={toggleBillPaid} toggleInstallmentPaid={toggleInstallmentPaid} loadDemo={loadDemo} canLoadDemoData={canLoadDemoData} addTransaction={addTransaction} />
         )}
         {tab === "bills" && (
           <BillsPage data={data} addBill={addBill} updateBill={updateBill} deleteBill={deleteBill} toggleBillPaid={toggleBillPaid} cardColor={cardColor} />
@@ -627,7 +629,7 @@ export default function App({ storage }) {
 
 /* ---------------------------------- dashboard ---------------------------------- */
 
-function Dashboard({ data, cardName, cardColor, toggleBillPaid, toggleInstallmentPaid, loadDemo, addTransaction }) {
+function Dashboard({ data, cardName, cardColor, toggleBillPaid, toggleInstallmentPaid, loadDemo, canLoadDemoData, addTransaction }) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const horizon = new Date(today); horizon.setDate(horizon.getDate() + 14);
   const [modalOpen, setModalOpen] = useState(false);
@@ -671,10 +673,13 @@ function Dashboard({ data, cardName, cardColor, toggleBillPaid, toggleInstallmen
       <div>
         <PageHeader title="Dashboard" subtitle={fmtDateLong(today)} />
         <Panel title="Nothing here yet">
-          <p className="empty" style={{ marginBottom: 12 }}>
-            Add your own bills, cards and festivals from the tabs on the left — or load sample content to see how the dashboard and layaway tiles work.
+          <p className="empty" style={{ marginBottom: canLoadDemoData ? 12 : 0 }}>
+            Add your own bills, cards and festivals from the tabs on the left
+            {canLoadDemoData ? " — or load sample content to see how the dashboard and layaway tiles work." : "."}
           </p>
-          <button className="btn btn-primary" onClick={loadDemo}><Sparkles size={15} /> Load demo data</button>
+          {canLoadDemoData && (
+            <button className="btn btn-primary" onClick={loadDemo}><Sparkles size={15} /> Load demo data</button>
+          )}
         </Panel>
       </div>
     );

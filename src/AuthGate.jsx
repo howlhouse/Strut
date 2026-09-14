@@ -5,6 +5,11 @@ import { auth, googleProvider } from "./firebase.js";
 import { makeFirestoreStorage } from "./storage.js";
 import App from "./App.jsx";
 
+// The "Load demo data" button is a testing convenience, not a real feature —
+// only show it to the app's own developer/owner account, not every new
+// sign-up.
+const OWNER_EMAIL = "howlhousemedia@gmail.com";
+
 // Gates the app behind Google Sign-In so Firestore can scope each user's
 // data to their own uid (see firestore.rules) — without this, anyone who
 // found the app's public Firebase config could read or overwrite the data.
@@ -57,7 +62,10 @@ export default function AuthGate() {
           <LogOut size={13} /> Sign out
         </button>
       </div>
-      <App storage={makeFirestoreStorage(user.uid)} />
+      <App
+        storage={makeFirestoreStorage(user.uid)}
+        canLoadDemoData={user.email === OWNER_EMAIL}
+      />
     </div>
   );
 }
