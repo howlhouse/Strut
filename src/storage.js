@@ -1,27 +1,30 @@
-// Persistence layer for Align.
+// Firestore-backed persistence for Strut, scoped per signed-in user.
 //
-// Today this is backed by localStorage, so the app works fully offline with
-// zero setup. The get/set shape ({ value } / Promise) matches what a Firebase
-// Firestore-backed implementation would look like, so swapping the backing
-// store later (see README) won't require touching any of the app code that
-// calls storage.get/storage.set.
+// Everything the app saves lives in one document per user:
+//   users/{uid}/strut/data
+// keyed by the same string keys the app already calls storage.get/set with
+// (e.g. "finance-data"). Access is restricted to that uid by firestore.rules.
+// The persistent local cache configured in firebase.js keeps this working
+// offline and syncing automatically once back online.
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { db } from "./firebase.js";
 
-export const storage = {
-  async get(key) {
-    try {
-      const value = window.localStorage.getItem(key);
-      return { value };
-    } catch {
-      // Storage can be unavailable (private browsing, disabled cookies, etc).
-      return { value: null };
-    }
-  },
+export function makeFirestoreStorage(uid) {
+  const ref = doc(db, "users", uid, "strut", "data");
 
-  async set(key, value) {
-    try {
-      window.localStorage.setItem(key, value);
-    } catch {
-      // Fail silently — the app still works in-memory for the session.
-    }
-  },
-};
+  return {
+    async get(key) {
+      try {
+        const snap = await getDoc(ref);
+        const value = snap.exists() ? snap.data()[key] : undefined;
+        return { value: value ?? null };
+      } catch {
+        return { value: null };
+      }
+    },
+
+    async set(key, value) {
+      await setDoc(ref, { [key]: value }, { merge: true });
+    },
+  };
+}

@@ -5,7 +5,6 @@ import {
 import {
   Plus, Trash2, X, Check, LayoutDashboard, Receipt, Ticket, Wallet, Pencil, ExternalLink, Sparkles, Eraser, BarChart3, Landmark, TrendingUp,
 } from "lucide-react";
-import { storage } from "./storage.js";
 
 /* ---------------------------------- helpers ---------------------------------- */
 
@@ -397,7 +396,7 @@ function computeCashForecast(data, accountIds, horizonDays) {
 
 /* ---------------------------------- app ---------------------------------- */
 
-export default function App() {
+export default function App({ storage }) {
   const [data, setData] = useState(DEFAULT_DATA);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("dashboard");
