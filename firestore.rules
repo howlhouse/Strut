@@ -1,0 +1,12 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Multi-tenant: any signed-in Google account may use the app, but each
+    // user's data lives under their own uid and only that same uid may ever
+    // read or write it. No user can see or affect another user's data.
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
