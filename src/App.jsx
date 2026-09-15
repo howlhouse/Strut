@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import {
   Plus, Trash2, X, Check, LayoutDashboard, Receipt, Ticket, Wallet, Pencil, ExternalLink, Sparkles, Eraser, BarChart3, Landmark, TrendingUp,
-  Settings as SettingsIcon, Sun, Moon, Monitor, Bell, PanelLeftClose, PanelLeftOpen, Menu, History,
+  Settings as SettingsIcon, Sun, Moon, Monitor, Bell, PanelLeftClose, PanelLeftOpen, Menu, History, MoreVertical,
   PiggyBank, ShieldCheck, ChevronLeft, ChevronRight, Tags,
 } from "lucide-react";
 import "./theme.css";
 import strutMark from "./assets/strut-mark.svg";
+import strutWordmarkLight from "./assets/strut-wordmark-light.svg";
+import strutWordmarkDark from "./assets/strut-wordmark-dark.svg";
 import { getCatalog, setCatalog as saveCatalog, DEFAULT_CATALOG } from "./catalog.js";
 import { listUserProfiles, listAdminUids, setAdminAccess } from "./adminData.js";
 
@@ -770,16 +772,15 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
         <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(true)} title="Open menu" aria-label="Open menu">
           <Menu size={20} strokeWidth={1.75} />
         </button>
-        <img src={strutMark} className="brand-mark" alt="" />
-        <span className="brand-name">Strut</span>
+        <Wordmark />
       </div>
 
       {mobileMenuOpen && <div className="sidebar-backdrop" onClick={() => setMobileMenuOpen(false)} />}
 
       <aside className={"sidebar" + (sidebarCollapsed ? " collapsed" : "") + (mobileMenuOpen ? " mobile-open" : "")}>
         <div className="brand">
-          <img src={strutMark} className="brand-mark" alt="" />
-          <span className="brand-name">Strut</span>
+          <Wordmark />
+          <img src={strutMark} className="brand-mark" alt="Strut" />
           <button className="sidebar-close" onClick={() => setMobileMenuOpen(false)} title="Close menu" aria-label="Close menu">
             <X size={18} />
           </button>
@@ -1097,6 +1098,15 @@ function BillRow({ bill, data, catalog, referenceDate, toggleBillPaid, updateBil
   const [cardId, setCardId] = useState(payment?.cardId || bill.cardId || "");
   const [amount, setAmount] = useState(payment?.amount ?? estimate);
   const [showHistory, setShowHistory] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDocClick = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [menuOpen]);
 
   const handleCheck = (e) => {
     toggleBillPaid(bill, key, e.target.checked, paidDate, cardId, amount);
@@ -1121,66 +1131,98 @@ function BillRow({ bill, data, catalog, referenceDate, toggleBillPaid, updateBil
   const history = isRecurring ? billHistoryEntries(bill, data) : [];
   const schedule = isRecurring ? billScheduleEntries(bill) : [];
 
+  const statusLabel = paid ? "Paid" : overdue ? "Overdue" : "Unpaid";
+  const statusClass = paid ? "paid" : overdue ? "overdue" : "unpaid";
+  const hasMeta = !!category || tags.length > 0;
+
   return (
-    <div className="ledger-row-group">
-    <div className="ledger-row wrap">
-      <span className="dot" style={{ background: bill.cardId ? cardColor(bill.cardId) : "var(--line)" }} />
-      <span className="col-name">
-        {bill.name}
-        <span className="freq-tag">{isRecurring ? "monthly" : "one-time"}</span>
-        {category && <Pill item={category} />}
-        {tags.map((t) => <Pill key={t.id} item={t} />)}
-      </span>
-      <span className="col-date" style={{ color: overdue ? "var(--rust)" : "var(--ink-soft)" }}>due {fmtDate(due)}</span>
-      <span className="col-amount">{money(paid ? payment.amount : estimate)}</span>
+    <div className="bill-row-group">
+      <div className="bill-row">
+        <div className="bill-name-block">
+          <span className="dot" style={{ background: bill.cardId ? cardColor(bill.cardId) : "var(--line)" }} />
+          <span className="bill-name" title={bill.name}>{bill.name}</span>
+          <span className="freq-tag">{isRecurring ? "monthly" : "one-time"}</span>
+        </div>
 
-      <button type="button" className="icon-btn" onClick={() => setEditingTags((v) => !v)} title={editingTags ? "Cancel" : "Edit tags & category"}>
-        {editingTags ? <X size={13} /> : <Tags size={13} />}
-      </button>
+        <span className="bill-due" style={{ color: overdue ? "var(--rust)" : "var(--ink-soft)" }}>{fmtDate(due)}</span>
+        <span className="bill-amount">{money(paid ? payment.amount : estimate)}</span>
 
-      {!paid && (
-        <button type="button" className="icon-btn" onClick={() => { setAmountDraft(estimate); setEditingAmount((v) => !v); }} title={editingAmount ? "Cancel" : "Edit amount owed"}>
-          {editingAmount ? <X size={13} /> : <Pencil size={13} />}
-        </button>
-      )}
+        <label className="paid-toggle">
+          <input type="checkbox" checked={paid} onChange={handleCheck} />
+          <span className={"status-chip status-" + statusClass}>
+            {paid && <Check size={11} strokeWidth={3} />}
+            {statusLabel}
+          </span>
+        </label>
 
-      {isRecurring && (
-        <button type="button" className="icon-btn" onClick={() => setShowHistory((v) => !v)} title={showHistory ? "Hide history & schedule" : "History & schedule"}>
-          <History size={13} />
-        </button>
-      )}
+        <div className="bill-menu" ref={menuRef}>
+          <button type="button" className="bill-menu-btn" onClick={() => setMenuOpen((v) => !v)} title="More actions" aria-label="More actions" aria-expanded={menuOpen}>
+            <MoreVertical size={15} />
+          </button>
+          {menuOpen && (
+            <div className="bill-menu-pop">
+              <button type="button" className="bill-menu-item" onClick={() => { setEditingTags((v) => !v); setMenuOpen(false); }}>
+                <Tags size={13} /> Edit tags &amp; category
+              </button>
+              {!paid && (
+                <button type="button" className="bill-menu-item" onClick={() => { setAmountDraft(estimate); setEditingAmount((v) => !v); setMenuOpen(false); }}>
+                  <Pencil size={13} /> Edit amount owed
+                </button>
+              )}
+              {paid && (
+                <button type="button" className="bill-menu-item" onClick={() => { setEditingPaid((v) => !v); setMenuOpen(false); }}>
+                  <Pencil size={13} /> Edit this payment
+                </button>
+              )}
+              {isRecurring && (
+                <button type="button" className="bill-menu-item" onClick={() => { setShowHistory((v) => !v); setMenuOpen(false); }}>
+                  <History size={13} /> {showHistory ? "Hide history & schedule" : "History & schedule"}
+                </button>
+              )}
+              <div className="bill-menu-divider" />
+              <button type="button" className="bill-menu-item danger" onClick={() => { deleteBill(bill.id); setMenuOpen(false); }}>
+                <Trash2 size={13} /> Delete bill
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
 
-      <label className="paid-toggle">
-        <input type="checkbox" checked={paid} onChange={handleCheck} />
-        <span className={paid ? "tag tag-paid" : "tag tag-unpaid"}>{paid ? "Paid" : overdue ? "Overdue" : "Unpaid"}</span>
-      </label>
-
-      {editingTags && (
-        <CategoryTagEditor
-          catalog={catalog}
-          categoryId={bill.categoryId}
-          tagIds={bill.tagIds || []}
-          onSave={(patch) => { updateBill(bill.id, patch); setEditingTags(false); }}
-        />
-      )}
-
-      {!paid && editingAmount && (
-        <div className="paid-summary">
-          <span>New amount owed:</span>
-          <input type="number" step="0.01" className="input input-small col-amount-input" value={amountDraft} autoFocus onChange={(e) => setAmountDraft(e.target.value)} />
-          <button type="button" className="icon-btn" onClick={saveAmount} title="Save"><Check size={14} /></button>
+      {!editingTags && !editingAmount && (hasMeta || (paid && !editingPaid)) && (
+        <div className="bill-row-meta">
+          <span className="bill-badges">
+            {category && <Pill item={category} />}
+            {tags.map((t) => <Pill key={t.id} item={t} />)}
+          </span>
+          {paid && !editingPaid && (
+            <span className="bill-paid-summary">{fmtDate(payment.paidDate)} · {money(payment.amount)} · {paidCardName || "no card noted"}</span>
+          )}
         </div>
       )}
 
-      {paid && !editingPaid && (
-        <div className="paid-summary">
-          <span>{fmtDate(payment.paidDate)} · {money(payment.amount)} · {paidCardName || "no card noted"}</span>
-          <button type="button" className="icon-btn" onClick={() => setEditingPaid(true)} title="Edit this payment"><Pencil size={13} /></button>
+      {editingTags && (
+        <div className="bill-row-edit">
+          <button type="button" className="icon-btn bill-row-edit-close" onClick={() => setEditingTags(false)} title="Cancel"><X size={13} /></button>
+          <CategoryTagEditor
+            catalog={catalog}
+            categoryId={bill.categoryId}
+            tagIds={bill.tagIds || []}
+            onSave={(patch) => { updateBill(bill.id, patch); setEditingTags(false); }}
+          />
+        </div>
+      )}
+
+      {!paid && editingAmount && (
+        <div className="bill-row-edit paid-summary">
+          <span>New amount owed:</span>
+          <input type="number" step="0.01" className="input input-small col-amount-input" value={amountDraft} autoFocus onChange={(e) => setAmountDraft(e.target.value)} />
+          <button type="button" className="icon-btn" onClick={saveAmount} title="Save"><Check size={14} /></button>
+          <button type="button" className="icon-btn" onClick={() => setEditingAmount(false)} title="Cancel"><X size={13} /></button>
         </div>
       )}
 
       {paid && editingPaid && (
-        <div className="paid-summary">
+        <div className="bill-row-edit paid-summary">
           <input type="date" className="input input-small" value={paidDate} onChange={(e) => { setPaidDate(e.target.value); toggleBillPaid(bill, key, true, e.target.value, cardId, amount); }} />
           <input type="number" step="0.01" className="input input-small col-amount-input" value={amount} onChange={(e) => { const v = e.target.value; setAmount(v); toggleBillPaid(bill, key, true, paidDate, cardId, v); }} />
           <select className="input input-small" value={cardId} onChange={(e) => { setCardId(e.target.value); toggleBillPaid(bill, key, true, paidDate, e.target.value, amount); }}>
@@ -1191,12 +1233,9 @@ function BillRow({ bill, data, catalog, referenceDate, toggleBillPaid, updateBil
         </div>
       )}
 
-      <button className="icon-btn" onClick={() => deleteBill(bill.id)} title="Delete bill"><Trash2 size={14} /></button>
-    </div>
-
-    {showHistory && (
-      <BillTimeline bill={bill} data={data} history={history} schedule={schedule} currentKey={key} toggleBillPaid={toggleBillPaid} updateBill={updateBill} />
-    )}
+      {showHistory && (
+        <BillTimeline bill={bill} data={data} history={history} schedule={schedule} currentKey={key} toggleBillPaid={toggleBillPaid} updateBill={updateBill} />
+      )}
     </div>
   );
 }
@@ -1303,6 +1342,18 @@ function BillTimeline({ bill, data, history, schedule, currentKey, toggleBillPai
         )}
       </div>
     </div>
+  );
+}
+
+// Strut wordmark image — swaps light/dark variant purely via CSS
+// ([data-theme] display toggle) so it always matches the active theme
+// with no extra prop plumbing.
+function Wordmark() {
+  return (
+    <span className="brand-wordmark">
+      <img src={strutWordmarkLight} className="wordmark-light" alt="Strut" />
+      <img src={strutWordmarkDark} className="wordmark-dark" alt="Strut" />
+    </span>
   );
 }
 
