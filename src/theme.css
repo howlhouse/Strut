@@ -339,7 +339,7 @@ nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .col-name { flex: 1; min-width: 120px; display: flex; align-items: center; gap: 8px; }
 .freq-tag { font-size: 10.5px; color: var(--ink-soft); border: 1px solid var(--line); padding: 1px 6px; border-radius: 999px; }
 .col-card { color: var(--ink-soft); font-size: 12.5px; width: 110px; }
-.col-date { color: var(--ink-soft); width: 68px; }
+.col-date { color: var(--ink-soft); width: 68px; white-space: nowrap; }
 .col-amount { width: 90px; text-align: right; font-weight: 600; }
 .col-balance { width: 100px; text-align: right; font-weight: 700; font-family: var(--font-display); }
 .check-list { display: flex; flex-direction: column; gap: 4px; }
@@ -615,7 +615,8 @@ select.input-small { max-width: 160px; }
     position: sticky; top: 0; z-index: 40;
   }
 
-  .sidebar, .sidebar.collapsed {
+  .sidebar, .sidebar.collapsed,
+  [data-theme="dark"] .sidebar, [data-theme="dark"] .sidebar.collapsed {
     position: fixed; top: 0; left: 0; bottom: 0; z-index: 70;
     width: 260px; max-width: 82vw;
     background: rgba(var(--paper-rgb), 0.82);
