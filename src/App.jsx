@@ -4,7 +4,7 @@ import {
 } from "recharts";
 import {
   Plus, Trash2, X, Check, LayoutDashboard, Receipt, Ticket, Wallet, Pencil, ExternalLink, Sparkles, Eraser, BarChart3, Landmark, TrendingUp,
-  Settings as SettingsIcon, Sun, Moon, Monitor, Bell, PanelLeftClose, PanelLeftOpen, Menu,
+  Settings as SettingsIcon, Sun, Moon, Monitor, Bell, PanelLeftClose, PanelLeftOpen, Menu, History,
   PiggyBank, ShieldCheck, ChevronLeft, ChevronRight, Tags,
 } from "lucide-react";
 import "./theme.css";
@@ -60,6 +60,30 @@ function billHistoryEntries(bill, data) {
     .filter((key) => !key.startsWith("once-"))
     .map((key) => ({ key, ...(data.billPayments[key]?.[bill.id] || {}) }))
     .filter((e) => e.paid && e.amount != null)
+    .sort((a, b) => a.key.localeCompare(b.key));
+}
+
+// A user-preloaded amount for one specific cycle of a recurring bill — e.g. a
+// billing schedule the provider already handed you (Geico's month-by-month
+// installments for a usage/rate-dependent bill). Consulted only until that
+// cycle is actually paid; toggleBillPaid clears the entry once it's fulfilled.
+function scheduledAmountFor(bill, key) {
+  const v = bill.scheduledAmounts?.[key];
+  return v != null && v !== "" ? Number(v) : undefined;
+}
+
+// The best estimate for a bill's given (not-yet-paid) cycle: a preloaded
+// schedule entry for that exact month if one was set, else the bill's
+// running default (normally the amount actually paid last cycle).
+function billEstimatedAmount(bill, key) {
+  return scheduledAmountFor(bill, key) ?? Number(bill.amount);
+}
+
+// Every preloaded future/current cycle that hasn't been paid yet, soonest
+// first — the flip side of billHistoryEntries.
+function billScheduleEntries(bill) {
+  return Object.entries(bill.scheduledAmounts || {})
+    .map(([key, amount]) => ({ key, amount: Number(amount) }))
     .sort((a, b) => a.key.localeCompare(b.key));
 }
 
@@ -308,7 +332,7 @@ function computeForecast(card, data, horizonDays) {
       const mk = monthKey(due);
       const payment = data.billPayments[mk]?.[b.id];
       if (due >= today && due <= horizonEnd && !payment?.paid) {
-        events.push({ date: due, delta: signedAmount(card, "charge", b.amount) });
+        events.push({ date: due, delta: signedAmount(card, "charge", billEstimatedAmount(b, mk)) });
       }
       cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
     }
@@ -391,8 +415,9 @@ function computeCashForecast(data, accountIds, horizonDays) {
     let cursor = new Date(today.getFullYear(), today.getMonth(), 1);
     while (cursor <= horizonEnd) {
       const due = new Date(cursor.getFullYear(), cursor.getMonth(), Math.min(b.dueDay, daysInMonth(cursor.getFullYear(), cursor.getMonth())));
-      const payment = data.billPayments[monthKey(due)]?.[b.id];
-      if (due >= today && due <= horizonEnd && !payment?.paid) events.push({ date: due, amount: -Number(b.amount), label: b.name, kind: "bill" });
+      const mk = monthKey(due);
+      const payment = data.billPayments[mk]?.[b.id];
+      if (due >= today && due <= horizonEnd && !payment?.paid) events.push({ date: due, amount: -billEstimatedAmount(b, mk), label: b.name, kind: "bill" });
       cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
     }
   });
@@ -447,7 +472,7 @@ function computeUpcoming(data, horizonDays) {
   data.bills.forEach((b) => {
     const { due, key } = billDueInfo(b, today);
     const paid = data.billPayments[key]?.[b.id]?.paid;
-    if (!paid && due <= horizon) items.push({ kind: "bill", ref: b, key, due, name: b.name, amount: Number(b.amount), cardId: b.cardId });
+    if (!paid && due <= horizon) items.push({ kind: "bill", ref: b, key, due, name: b.name, amount: billEstimatedAmount(b, key), cardId: b.cardId });
   });
   data.layaways.forEach((f) => {
     f.installments.forEach((i) => {
@@ -591,15 +616,26 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
     const existing = d.billPayments[key][bill.id];
     if (checked) {
       if (existing?.txId) d.cardTransactions = d.cardTransactions.filter((t) => t.id !== existing.txId);
-      const amt = amount != null && amount !== "" ? Number(amount) : Number(bill.amount);
+      const amt = amount != null && amount !== "" ? Number(amount) : billEstimatedAmount(bill, key);
       const txId = uid();
       if (cardId) {
         d.cardTransactions.push({ id: txId, cardId, date: paidDate, amount: amt, type: "charge", description: bill.name, source: "bill", ref: bill.id, categoryId: bill.categoryId || null });
       }
       d.billPayments[key][bill.id] = { paid: true, paidDate, cardId, amount: amt, txId: cardId ? txId : null };
-      // Keep the bill's default estimate current so next cycle starts from the latest known amount.
       const billRef = d.bills.find((b) => b.id === bill.id);
-      if (billRef) billRef.amount = amt;
+      if (billRef) {
+        // Keep the bill's default estimate current so next cycle starts from the latest known
+        // amount — but only when this write IS the bill's current cycle. Backfilling an older
+        // month's history (see BillHistory) uses this same action with a past key, and must not
+        // clobber the live forecast estimate with an out-of-date amount.
+        if (key === billDueInfo(bill).key) billRef.amount = amt;
+        // This cycle is now actually paid, so any preloaded schedule entry for it is fulfilled —
+        // drop it so it stops showing up as "upcoming".
+        if (billRef.scheduledAmounts?.[key] != null) {
+          const { [key]: _dropped, ...rest } = billRef.scheduledAmounts;
+          billRef.scheduledAmounts = rest;
+        }
+      }
     } else {
       if (existing?.txId) d.cardTransactions = d.cardTransactions.filter((t) => t.id !== existing.txId);
       delete d.billPayments[key][bill.id];
@@ -873,7 +909,7 @@ function Dashboard({ data, catalog, cardName, cardColor, toggleBillPaid, toggleI
     return data.bills.reduce((sum, b) => {
       const { key } = billDueInfo(b, today);
       const paid = data.billPayments[key]?.[b.id]?.paid;
-      return paid ? sum : sum + Number(b.amount);
+      return paid ? sum : sum + billEstimatedAmount(b, key);
     }, 0);
   }, [data]);
 
@@ -1049,15 +1085,17 @@ function BillRow({ bill, data, catalog, referenceDate, toggleBillPaid, updateBil
   const { due, key } = billDueInfo(bill, referenceDate);
   const payment = data.billPayments[key]?.[bill.id];
   const paid = !!payment?.paid;
+  const estimate = billEstimatedAmount(bill, key);
   const overdue = !paid && due < new Date(todayISO());
   const isRecurring = (bill.frequency || "recurring") !== "onetime";
   const [editingPaid, setEditingPaid] = useState(false);
   const [editingAmount, setEditingAmount] = useState(false);
   const [editingTags, setEditingTags] = useState(false);
-  const [amountDraft, setAmountDraft] = useState(bill.amount);
+  const [amountDraft, setAmountDraft] = useState(estimate);
   const [paidDate, setPaidDate] = useState(payment?.paidDate || todayISO());
   const [cardId, setCardId] = useState(payment?.cardId || bill.cardId || "");
-  const [amount, setAmount] = useState(payment?.amount ?? bill.amount);
+  const [amount, setAmount] = useState(payment?.amount ?? estimate);
+  const [showHistory, setShowHistory] = useState(false);
 
   const handleCheck = (e) => {
     toggleBillPaid(bill, key, e.target.checked, paidDate, cardId, amount);
@@ -1066,7 +1104,12 @@ function BillRow({ bill, data, catalog, referenceDate, toggleBillPaid, updateBil
 
   const saveAmount = () => {
     const v = Number(amountDraft) || 0;
-    updateBill(bill.id, { amount: v });
+    // Editing the amount for the upcoming/current cycle is the same thing as
+    // preloading it — write it into the schedule for this cycle's key rather
+    // than the bill's running default, so it doesn't get clobbered by an
+    // older schedule entry and so it plays by the same rules as amounts
+    // preloaded further out (see BillTimeline below).
+    updateBill(bill.id, { scheduledAmounts: { ...(bill.scheduledAmounts || {}), [key]: v } });
     setAmount(v);
     setEditingAmount(false);
   };
@@ -1074,8 +1117,11 @@ function BillRow({ bill, data, catalog, referenceDate, toggleBillPaid, updateBil
   const paidCardName = data.cards.find((c) => c.id === payment?.cardId)?.name;
   const category = (catalog?.categories || []).find((c) => c.id === bill.categoryId);
   const tags = (catalog?.tags || []).filter((t) => (bill.tagIds || []).includes(t.id));
+  const history = isRecurring ? billHistoryEntries(bill, data) : [];
+  const schedule = isRecurring ? billScheduleEntries(bill) : [];
 
   return (
+    <div className="ledger-row-group">
     <div className="ledger-row wrap">
       <span className="dot" style={{ background: bill.cardId ? cardColor(bill.cardId) : "var(--line)" }} />
       <span className="col-name">
@@ -1085,15 +1131,21 @@ function BillRow({ bill, data, catalog, referenceDate, toggleBillPaid, updateBil
         {tags.map((t) => <Pill key={t.id} item={t} />)}
       </span>
       <span className="col-date" style={{ color: overdue ? "var(--rust)" : "var(--ink-soft)" }}>due {fmtDate(due)}</span>
-      <span className="col-amount">{money(bill.amount)}</span>
+      <span className="col-amount">{money(paid ? payment.amount : estimate)}</span>
 
       <button type="button" className="icon-btn" onClick={() => setEditingTags((v) => !v)} title={editingTags ? "Cancel" : "Edit tags & category"}>
         {editingTags ? <X size={13} /> : <Tags size={13} />}
       </button>
 
       {!paid && (
-        <button type="button" className="icon-btn" onClick={() => { setAmountDraft(bill.amount); setEditingAmount((v) => !v); }} title={editingAmount ? "Cancel" : "Edit amount owed"}>
+        <button type="button" className="icon-btn" onClick={() => { setAmountDraft(estimate); setEditingAmount((v) => !v); }} title={editingAmount ? "Cancel" : "Edit amount owed"}>
           {editingAmount ? <X size={13} /> : <Pencil size={13} />}
+        </button>
+      )}
+
+      {isRecurring && (
+        <button type="button" className="icon-btn" onClick={() => setShowHistory((v) => !v)} title={showHistory ? "Hide history & schedule" : "History & schedule"}>
+          <History size={13} />
         </button>
       )}
 
@@ -1139,6 +1191,116 @@ function BillRow({ bill, data, catalog, referenceDate, toggleBillPaid, updateBil
       )}
 
       <button className="icon-btn" onClick={() => deleteBill(bill.id)} title="Delete bill"><Trash2 size={14} /></button>
+    </div>
+
+    {showHistory && (
+      <BillTimeline bill={bill} data={data} history={history} schedule={schedule} currentKey={key} toggleBillPaid={toggleBillPaid} updateBill={updateBill} />
+    )}
+    </div>
+  );
+}
+
+// Expandable per-bill panel covering both directions of a usage-dependent
+// recurring bill (rent+utilities, electric, cell phone): past months whose
+// actual charge you want on record (for Analytics), and future months whose
+// amount you already know (e.g. a provider-issued billing schedule) and want
+// the forecast to use instead of repeating the last paid amount.
+function BillTimeline({ bill, data, history, schedule, currentKey, toggleBillPaid, updateBill }) {
+  const [addingPast, setAddingPast] = useState(false);
+  const [pastDate, setPastDate] = useState(todayISO());
+  const [pastAmount, setPastAmount] = useState("");
+  const [pastCardId, setPastCardId] = useState(bill.cardId || "");
+
+  const [addingFuture, setAddingFuture] = useState(false);
+  const [futureMonth, setFutureMonth] = useState(currentKey.startsWith("once-") ? "" : currentKey);
+  const [futureAmount, setFutureAmount] = useState("");
+
+  const savePast = (e) => {
+    e.preventDefault();
+    if (!pastAmount) return;
+    const mk = monthKey(new Date(pastDate));
+    toggleBillPaid(bill, mk, true, pastDate, pastCardId, pastAmount);
+    setAddingPast(false);
+    setPastAmount("");
+  };
+
+  const removePast = (entryKey) => toggleBillPaid(bill, entryKey, false);
+
+  const saveFuture = (e) => {
+    e.preventDefault();
+    if (!futureMonth || !futureAmount) return;
+    updateBill(bill.id, { scheduledAmounts: { ...(bill.scheduledAmounts || {}), [futureMonth]: Number(futureAmount) } });
+    setAddingFuture(false);
+    setFutureAmount("");
+  };
+
+  const removeFuture = (entryKey) => {
+    const { [entryKey]: _dropped, ...rest } = bill.scheduledAmounts || {};
+    updateBill(bill.id, { scheduledAmounts: rest });
+  };
+
+  return (
+    <div className="bill-timeline">
+      <div className="bill-timeline-col">
+        <div className="bill-timeline-head">Upcoming schedule</div>
+        {schedule.length === 0 ? (
+          <p className="muted-text">No amounts preloaded yet. Got a billing schedule from the provider? Add each month's amount ahead of time so the forecast uses it instead of repeating the last bill.</p>
+        ) : (
+          <div className="bill-history-list">
+            {schedule.map((s) => (
+              <div className="bill-history-row" key={s.key}>
+                <span>{monthLabel(s.key)}</span>
+                <span>{money(s.amount)}</span>
+                <button type="button" className="icon-btn" onClick={() => removeFuture(s.key)} title="Remove"><Trash2 size={13} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+        {addingFuture ? (
+          <form className="bill-history-form" onSubmit={saveFuture}>
+            <input type="month" className="input input-small" min={currentKey} value={futureMonth} onChange={(e) => setFutureMonth(e.target.value)} autoFocus />
+            <input type="number" step="0.01" className="input input-small col-amount-input" placeholder="Amount" value={futureAmount} onChange={(e) => setFutureAmount(e.target.value)} />
+            <button type="submit" className="icon-btn" title="Save"><Check size={14} /></button>
+            <button type="button" className="icon-btn" onClick={() => setAddingFuture(false)} title="Cancel"><X size={14} /></button>
+          </form>
+        ) : (
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => setAddingFuture(true)}><Plus size={13} /> Preload a month's amount</button>
+        )}
+      </div>
+
+      <div className="bill-timeline-col">
+        <div className="bill-timeline-head">Past payments</div>
+        {history.length === 0 ? (
+          <p className="muted-text">No past months recorded yet.</p>
+        ) : (
+          <div className="bill-history-list">
+            {history.slice().reverse().map((h) => (
+              <div className="bill-history-row" key={h.key}>
+                <span>{monthLabel(h.key)}</span>
+                <span>{money(h.amount)}</span>
+                <span className="muted-text">{data.cards.find((c) => c.id === h.cardId)?.name || "no card noted"}</span>
+                {h.key !== currentKey && (
+                  <button type="button" className="icon-btn" onClick={() => removePast(h.key)} title="Remove this record"><Trash2 size={13} /></button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {addingPast ? (
+          <form className="bill-history-form" onSubmit={savePast}>
+            <input type="date" className="input input-small" max={todayISO()} value={pastDate} onChange={(e) => setPastDate(e.target.value)} autoFocus />
+            <input type="number" step="0.01" className="input input-small col-amount-input" placeholder="Amount" value={pastAmount} onChange={(e) => setPastAmount(e.target.value)} />
+            <select className="input input-small" value={pastCardId} onChange={(e) => setPastCardId(e.target.value)}>
+              <option value="">no card</option>
+              {data.cards.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <button type="submit" className="icon-btn" title="Save"><Check size={14} /></button>
+            <button type="button" className="icon-btn" onClick={() => setAddingPast(false)} title="Cancel"><X size={14} /></button>
+          </form>
+        ) : (
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => setAddingPast(true)}><Plus size={13} /> Log a past month</button>
+        )}
+      </div>
     </div>
   );
 }
