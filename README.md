@@ -1,4 +1,9 @@
-# Strut
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="src/assets/strut-wordmark-dark.svg">
+    <img src="src/assets/strut-wordmark-light.svg" alt="Strut" height="70">
+  </picture>
+</p>
 
 A personal finance tracker — bills, cards, layaway installment plans
 (festivals, flex pay, and other financed purchases), bank accounts,

@@ -8,6 +8,7 @@ import {
   PiggyBank, ShieldCheck, ChevronLeft, ChevronRight, Tags,
 } from "lucide-react";
 import "./theme.css";
+import strutMark from "./assets/strut-mark.svg";
 import { getCatalog, setCatalog as saveCatalog, DEFAULT_CATALOG } from "./catalog.js";
 import { listUserProfiles, listAdminUids, setAdminAccess } from "./adminData.js";
 
@@ -769,7 +770,7 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
         <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(true)} title="Open menu" aria-label="Open menu">
           <Menu size={20} strokeWidth={1.75} />
         </button>
-        <span className="brand-mark">S</span>
+        <img src={strutMark} className="brand-mark" alt="" />
         <span className="brand-name">Strut</span>
       </div>
 
@@ -777,7 +778,7 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
 
       <aside className={"sidebar" + (sidebarCollapsed ? " collapsed" : "") + (mobileMenuOpen ? " mobile-open" : "")}>
         <div className="brand">
-          <span className="brand-mark">S</span>
+          <img src={strutMark} className="brand-mark" alt="" />
           <span className="brand-name">Strut</span>
           <button className="sidebar-close" onClick={() => setMobileMenuOpen(false)} title="Close menu" aria-label="Close menu">
             <X size={18} />

@@ -6,6 +6,7 @@ import { makeFirestoreStorage } from "./storage.js";
 import { upsertOwnProfile, getOwnAdminFlag } from "./adminData.js";
 import { useTheme } from "./useTheme.js";
 import App from "./App.jsx";
+import strutMark from "./assets/strut-mark.svg";
 import "./theme.css";
 
 // The "Load demo data" button is a testing convenience, not a real feature —
@@ -52,6 +53,7 @@ export default function AuthGate() {
   if (user === undefined) {
     return (
       <Screen theme={theme}>
+        <img src={strutMark} className="gate-mark" alt="" />
         <p className="gate-text">Loading…</p>
       </Screen>
     );
@@ -60,7 +62,7 @@ export default function AuthGate() {
   if (!user) {
     return (
       <Screen theme={theme}>
-        <span className="gate-mark">S</span>
+        <img src={strutMark} className="gate-mark" alt="Strut" />
         <h1 className="gate-title">Strut</h1>
         <p className="gate-text">Sign in to sync your data across devices.</p>
         <button className="gate-btn" onClick={handleSignIn} disabled={signingIn}>
