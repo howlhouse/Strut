@@ -150,7 +150,7 @@ const PALETTE = ["#8B5CF6", "#F472B6", "#22B8A8", "#F5A623", "#E11D5E", "#0E9F6E
 
 
 const DEFAULT_DATA = {
-  cards: [], bills: [], billPayments: {}, layaways: [], cardTransactions: [], bankAccounts: [], incomes: [], budgets: [],
+  cards: [], bills: [], billPayments: {}, layaways: [], cardTransactions: [], bankAccounts: [], accountTransactions: [], incomes: [], budgets: [],
   settings: { remindersEnabled: true, reminderDays: 14 },
 };
 
@@ -194,6 +194,45 @@ function cardOptionLabel(c) {
   return `${c.name} · ${(c.type || "credit") === "debit" ? "Debit" : "Credit"}`;
 }
 
+function accountOptionLabel(a) {
+  return `${a.name} · ${a.type === "savings" ? "Savings" : "Checking"}`;
+}
+
+// A bill, layaway, or manual transaction can be funded either from a card
+// (data.cards, its own credit/debit ledger) or a plain bank account
+// (data.bankAccounts) — e.g. a car payment that can only ever be paid from
+// one specific checking account. IDs are unique across both collections
+// (both use uid()), so a single stored id resolves unambiguously to
+// whichever one it belongs to. Bank accounts are normalized to look like a
+// debit card here (type: "debit", no credit limit) so the existing
+// sign/color/balance helpers built for cards work on both without a
+// separate code path.
+function fundingSource(data, id) {
+  if (!id) return null;
+  const card = data.cards.find((c) => c.id === id);
+  if (card) return { ...card, kind: "card" };
+  const acct = (data.bankAccounts || []).find((a) => a.id === id);
+  if (acct) return { ...acct, kind: "account", type: "debit", creditLimit: null };
+  return null;
+}
+
+const isBankAccountId = (d, id) => !d.cards.some((c) => c.id === id) && (d.bankAccounts || []).some((a) => a.id === id);
+
+// A bank account's balance is derived the same way a card's is: a manually
+// reconciled anchor (balance/updatedDate) plus every transaction logged
+// against it since that date — so logging a bill or transaction against an
+// account keeps its balance current without hand-editing it every time.
+function accountBalance(account, data) {
+  const asOf = account.updatedDate ? new Date(account.updatedDate) : new Date(todayISO());
+  const today = new Date(todayISO());
+  let balance = Number(account.balance) || 0;
+  (data.accountTransactions || []).filter((t) => t.accountId === account.id).forEach((t) => {
+    const td = new Date(t.date);
+    if (td > asOf && td <= today) balance += (t.type === "charge" ? -1 : 1) * Number(t.amount);
+  });
+  return Math.round(balance * 100) / 100;
+}
+
 const isEmptyData = (d) => d.cards.length === 0 && d.bills.length === 0 && d.layaways.length === 0;
 
 function buildDemoData() {
@@ -211,8 +250,15 @@ function buildDemoData() {
   const phoneDueDay = Math.min(Math.max(today.getDate() - 3, 1), 27);
   const phoneDue = new Date(today.getFullYear(), today.getMonth(), phoneDueDay);
 
+  // "Car Payment" is pinned straight to the bank account (not a card) — the
+  // account's own ledger, not a card's, is what should move when it's paid.
+  const checkingAcctId = "demo-acct-checking";
+  const carDueDay = Math.min(Math.max(today.getDate() - 10, 1), 27);
+  const carLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, carDueDay);
+
   const bills = [
     { id: "demo-bill-rent", name: "Rent", amount: 1450, cardId: debitId, frequency: "recurring", dueDay: 1 },
+    { id: "demo-bill-car", name: "Car Payment", amount: 385, cardId: checkingAcctId, frequency: "recurring", dueDay: carDueDay },
     { id: "demo-bill-electric", name: "Electric", amount: 102.75, cardId: creditId, frequency: "recurring", dueDay: 15 },
     { id: "demo-bill-internet", name: "Internet", amount: 65, cardId: creditId, frequency: "recurring", dueDay: 22 },
     { id: "demo-bill-phone", name: "Phone", amount: 55, cardId: creditId, frequency: "recurring", dueDay: phoneDueDay },
@@ -230,6 +276,9 @@ function buildDemoData() {
   const billPayments = {
     [monthKey(phoneDue)]: {
       "demo-bill-phone": { paid: true, paidDate: iso(phoneDue), cardId: creditId, amount: 55, txId: "demo-tx-phone" },
+    },
+    [monthKey(carLastMonth)]: {
+      "demo-bill-car": { paid: true, paidDate: iso(carLastMonth), cardId: checkingAcctId, amount: 385, txId: "demo-tx-car-1" },
     },
   };
   electricHistory.forEach((h) => {
@@ -283,11 +332,16 @@ function buildDemoData() {
   ];
 
   const bankAccounts = [
-    { id: "demo-acct-checking", name: "Main Checking", type: "checking", balance: 1450.32, updatedDate: iso(addDays(today, -1)) },
+    { id: checkingAcctId, name: "Main Checking", type: "checking", balance: 1450.32, updatedDate: iso(addDays(today, -1)) },
     { id: "demo-acct-savings", name: "Emergency Savings", type: "savings", balance: 4200.0, updatedDate: iso(addDays(today, -6)) },
   ];
 
-  return { cards, bills, billPayments, layaways, cardTransactions, bankAccounts };
+  const accountTransactions = [
+    { id: "demo-tx-car-1", accountId: checkingAcctId, date: iso(carLastMonth), amount: 385, type: "charge", description: "Car Payment", source: "bill", ref: "demo-bill-car" },
+    { id: "demo-tx-coffee", accountId: checkingAcctId, date: iso(addDays(today, -2)), amount: 6.5, type: "charge", description: "Coffee", source: "manual" },
+  ];
+
+  return { cards, bills, billPayments, layaways, cardTransactions, bankAccounts, accountTransactions };
 }
 
 /* ---------------------------------- forecast ---------------------------------- */
@@ -397,7 +451,7 @@ function computeCashForecast(data, accountIds, horizonDays) {
   horizonEnd.setDate(horizonEnd.getDate() + horizonDays);
 
   const accounts = (data.bankAccounts || []).filter((a) => accountIds.includes(a.id));
-  const startingBalance = accounts.reduce((s, a) => s + Number(a.balance), 0);
+  const startingBalance = accounts.reduce((s, a) => s + accountBalance(a, data), 0);
 
   const events = [];
 
@@ -432,6 +486,18 @@ function computeCashForecast(data, accountIds, horizonDays) {
     });
   });
 
+  // Manually logged transactions against a tracked account (e.g. a future-
+  // dated deposit or charge someone entered ahead of time) count too, the
+  // same way a future-dated card transaction already shows up in a card's
+  // own forecast.
+  (data.accountTransactions || []).filter((t) => accountIds.includes(t.accountId)).forEach((t) => {
+    const td = new Date(t.date);
+    td.setHours(0, 0, 0, 0);
+    if (td > today && td <= horizonEnd) {
+      events.push({ date: td, amount: (t.type === "charge" ? -1 : 1) * Number(t.amount), label: t.description, kind: "transaction" });
+    }
+  });
+
   events.sort((a, b) => a.date - b.date);
 
   let running = startingBalance;
@@ -457,7 +523,7 @@ function computeCashForecast(data, accountIds, horizonDays) {
 
 /* ---------------------------------- net money & budgets ---------------------------------- */
 
-const totalBankBalances = (data) => (data.bankAccounts || []).reduce((s, a) => s + Number(a.balance), 0);
+const totalBankBalances = (data) => (data.bankAccounts || []).reduce((s, a) => s + accountBalance(a, data), 0);
 
 const totalCardBalancesOwed = (data) =>
   data.cards.filter((c) => (c.type || "credit") === "credit").reduce((sum, c) => {
@@ -593,9 +659,9 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
   });
   const deleteBudget = (id) => update((d) => { d.budgets = (d.budgets || []).filter((b) => b.id !== id); return d; });
 
-  const cardName = (id) => data.cards.find((c) => c.id === id)?.name || "—";
+  const cardName = (id) => fundingSource(data, id)?.name || "—";
   const cardColor = (id) => {
-    const idx = data.cards.findIndex((c) => c.id === id);
+    const idx = [...data.cards, ...(data.bankAccounts || [])].findIndex((s) => s.id === id);
     return CARD_COLORS[idx % CARD_COLORS.length] || "var(--ink-soft)";
   };
 
@@ -611,18 +677,27 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
     const removedTxIds = [];
     Object.values(d.billPayments).forEach((m) => { if (m[id]?.txId) removedTxIds.push(m[id].txId); delete m[id]; });
     d.cardTransactions = d.cardTransactions.filter((t) => !removedTxIds.includes(t.id));
+    d.accountTransactions = (d.accountTransactions || []).filter((t) => !removedTxIds.includes(t.id));
     return d;
   });
 
+  // cardId here is really "funding source id" — a bill can be pinned to
+  // either a card or a plain bank account (see fundingSource above), so the
+  // resulting payment transaction is routed to whichever ledger it belongs to.
   const toggleBillPaid = (bill, key, checked, paidDate, cardId, amount) => update((d) => {
     d.billPayments[key] = d.billPayments[key] || {};
     const existing = d.billPayments[key][bill.id];
     if (checked) {
-      if (existing?.txId) d.cardTransactions = d.cardTransactions.filter((t) => t.id !== existing.txId);
+      if (existing?.txId) {
+        d.cardTransactions = d.cardTransactions.filter((t) => t.id !== existing.txId);
+        d.accountTransactions = (d.accountTransactions || []).filter((t) => t.id !== existing.txId);
+      }
       const amt = amount != null && amount !== "" ? Number(amount) : billEstimatedAmount(bill, key);
       const txId = uid();
       if (cardId) {
-        d.cardTransactions.push({ id: txId, cardId, date: paidDate, amount: amt, type: "charge", description: bill.name, source: "bill", ref: bill.id, categoryId: bill.categoryId || null });
+        const tx = { id: txId, date: paidDate, amount: amt, type: "charge", description: bill.name, source: "bill", ref: bill.id, categoryId: bill.categoryId || null };
+        if (isBankAccountId(d, cardId)) d.accountTransactions.push({ ...tx, accountId: cardId });
+        else d.cardTransactions.push({ ...tx, cardId });
       }
       d.billPayments[key][bill.id] = { paid: true, paidDate, cardId, amount: amt, txId: cardId ? txId : null };
       const billRef = d.bills.find((b) => b.id === bill.id);
@@ -640,7 +715,10 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
         }
       }
     } else {
-      if (existing?.txId) d.cardTransactions = d.cardTransactions.filter((t) => t.id !== existing.txId);
+      if (existing?.txId) {
+        d.cardTransactions = d.cardTransactions.filter((t) => t.id !== existing.txId);
+        d.accountTransactions = (d.accountTransactions || []).filter((t) => t.id !== existing.txId);
+      }
       delete d.billPayments[key][bill.id];
     }
     return d;
@@ -708,13 +786,18 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
     d.cardTransactions = d.cardTransactions.filter((t) => t.cardId !== id);
     return d;
   });
-  const addTransaction = (cardId, tx) => update((d) => {
-    d.cardTransactions.push({ id: uid(), cardId, source: "manual", ...tx });
+  // fundingId is either a card id or a bank account id (see fundingSource) —
+  // routed to whichever ledger it belongs to. Used for both the Cards page's
+  // "Add transaction" and the Bank Accounts page's "Log a transaction".
+  const addTransaction = (fundingId, tx) => update((d) => {
+    if (isBankAccountId(d, fundingId)) d.accountTransactions.push({ id: uid(), accountId: fundingId, source: "manual", ...tx });
+    else d.cardTransactions.push({ id: uid(), cardId: fundingId, source: "manual", ...tx });
     return d;
   });
   const deleteTransaction = (id) => update((d) => {
-    const tx = d.cardTransactions.find((t) => t.id === id);
+    const tx = d.cardTransactions.find((t) => t.id === id) || (d.accountTransactions || []).find((t) => t.id === id);
     d.cardTransactions = d.cardTransactions.filter((t) => t.id !== id);
+    d.accountTransactions = (d.accountTransactions || []).filter((t) => t.id !== id);
     if (tx?.source === "bill") {
       Object.values(d.billPayments).forEach((m) => { Object.keys(m).forEach((bid) => { if (m[bid].txId === id) delete m[bid]; }); });
     }
@@ -731,7 +814,11 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
     if (a) Object.assign(a, patch);
     return d;
   });
-  const deleteBankAccount = (id) => update((d) => { d.bankAccounts = d.bankAccounts.filter((a) => a.id !== id); return d; });
+  const deleteBankAccount = (id) => update((d) => {
+    d.bankAccounts = d.bankAccounts.filter((a) => a.id !== id);
+    d.accountTransactions = (d.accountTransactions || []).filter((t) => t.accountId !== id);
+    return d;
+  });
 
   /* ---- income (paycheck) actions ---- */
   const addIncome = (income) => update((d) => { d.incomes.push({ id: uid(), ...income }); return d; });
@@ -860,7 +947,7 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
           <CardsPage data={data} catalog={catalog} addCard={addCard} deleteCard={deleteCard} addTransaction={addTransaction} deleteTransaction={deleteTransaction} cardColor={cardColor} />
         )}
         {tab === "accounts" && (
-          <BankAccountsPage data={data} addBankAccount={addBankAccount} updateBankAccount={updateBankAccount} deleteBankAccount={deleteBankAccount} />
+          <BankAccountsPage data={data} catalog={catalog} addBankAccount={addBankAccount} updateBankAccount={updateBankAccount} deleteBankAccount={deleteBankAccount} addTransaction={addTransaction} deleteTransaction={deleteTransaction} />
         )}
         {tab === "forecast" && (
           <ForecastPage data={data} addIncome={addIncome} deleteIncome={deleteIncome} />
@@ -1017,7 +1104,7 @@ function Dashboard({ data, catalog, cardName, cardColor, toggleBillPaid, toggleI
           {data.cards.length === 0 ? (
             <p className="empty">Add a card first in Card ledgers.</p>
           ) : (
-            <GlobalTransactionForm cards={data.cards} catalog={catalog} addTransaction={addTransaction} onDone={() => setModalOpen(false)} />
+            <GlobalTransactionForm data={data} catalog={catalog} addTransaction={addTransaction} onDone={() => setModalOpen(false)} />
           )}
         </Modal>
       )}
@@ -1061,7 +1148,7 @@ function BillsPage({ data, catalog, addBill, updateBill, deleteBill, toggleBillP
         </button>
       } />
 
-      {adding && <AddBillForm cards={data.cards} catalog={catalog} onAdd={(b) => { addBill(b); setAdding(false); }} />}
+      {adding && <AddBillForm data={data} catalog={catalog} onAdd={(b) => { addBill(b); setAdding(false); }} />}
 
       <MonthSwitcher month={selectedMonth} setMonth={setSelectedMonth} />
 
@@ -1125,7 +1212,7 @@ function BillRow({ bill, data, catalog, referenceDate, toggleBillPaid, updateBil
     setEditingAmount(false);
   };
 
-  const paidCardName = data.cards.find((c) => c.id === payment?.cardId)?.name;
+  const paidCardName = fundingSource(data, payment?.cardId)?.name;
   const category = (catalog?.categories || []).find((c) => c.id === bill.categoryId);
   const tags = (catalog?.tags || []).filter((t) => (bill.tagIds || []).includes(t.id));
   const history = isRecurring ? billHistoryEntries(bill, data) : [];
@@ -1225,10 +1312,13 @@ function BillRow({ bill, data, catalog, referenceDate, toggleBillPaid, updateBil
         <div className="bill-row-edit paid-summary">
           <input type="date" className="input input-small" value={paidDate} onChange={(e) => { setPaidDate(e.target.value); toggleBillPaid(bill, key, true, e.target.value, cardId, amount); }} />
           <input type="number" step="0.01" className="input input-small col-amount-input" value={amount} onChange={(e) => { const v = e.target.value; setAmount(v); toggleBillPaid(bill, key, true, paidDate, cardId, v); }} />
-          <select className="input input-small" value={cardId} onChange={(e) => { setCardId(e.target.value); toggleBillPaid(bill, key, true, paidDate, e.target.value, amount); }}>
-            <option value="">no card</option>
-            {data.cards.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <FundingSourceSelect
+            data={data}
+            value={cardId}
+            onChange={(v) => { setCardId(v); toggleBillPaid(bill, key, true, paidDate, v, amount); }}
+            allowNone
+            className="input input-small"
+          />
           <button type="button" className="icon-btn" onClick={() => setEditingPaid(false)} title="Lock in"><Check size={14} /></button>
         </div>
       )}
@@ -1318,7 +1408,7 @@ function BillTimeline({ bill, data, history, schedule, currentKey, toggleBillPai
               <div className="bill-history-row" key={h.key}>
                 <span>{monthLabel(h.key)}</span>
                 <span>{money(h.amount)}</span>
-                <span className="muted-text">{data.cards.find((c) => c.id === h.cardId)?.name || "no card noted"}</span>
+                <span className="muted-text">{fundingSource(data, h.cardId)?.name || "no card noted"}</span>
                 {h.key !== currentKey && (
                   <button type="button" className="icon-btn" onClick={() => removePast(h.key)} title="Remove this record"><Trash2 size={13} /></button>
                 )}
@@ -1330,10 +1420,7 @@ function BillTimeline({ bill, data, history, schedule, currentKey, toggleBillPai
           <form className="bill-history-form" onSubmit={savePast}>
             <input type="date" className="input input-small" max={todayISO()} value={pastDate} onChange={(e) => setPastDate(e.target.value)} autoFocus />
             <input type="number" step="0.01" className="input input-small col-amount-input" placeholder="Amount" value={pastAmount} onChange={(e) => setPastAmount(e.target.value)} />
-            <select className="input input-small" value={pastCardId} onChange={(e) => setPastCardId(e.target.value)}>
-              <option value="">no card</option>
-              {data.cards.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <FundingSourceSelect data={data} value={pastCardId} onChange={setPastCardId} allowNone className="input input-small" />
             <button type="submit" className="icon-btn" title="Save"><Check size={14} /></button>
             <button type="button" className="icon-btn" onClick={() => setAddingPast(false)} title="Cancel"><X size={14} /></button>
           </form>
@@ -1360,6 +1447,30 @@ function Wordmark() {
 // Small colored pill for a shared catalog tag/category entry.
 function Pill({ item }) {
   return <span className="pill" style={{ background: item.color || "var(--ink-soft)" }}>{item.name}</span>;
+}
+
+// Shared funding-source picker for bills, transactions, and layaway
+// payments — everywhere someone chooses which card or bank account a
+// payment comes from. Grouped so a checking account used for something
+// like a car payment is just as pickable as a credit card.
+function FundingSourceSelect({ data, value, onChange, allowNone, className }) {
+  const cards = data.cards || [];
+  const accounts = data.bankAccounts || [];
+  return (
+    <select className={className || "input"} value={value} onChange={(e) => onChange(e.target.value)}>
+      {allowNone && <option value="">no card</option>}
+      {cards.length > 0 && (
+        <optgroup label="Cards">
+          {cards.map((c) => <option key={c.id} value={c.id}>{cardOptionLabel(c)}</option>)}
+        </optgroup>
+      )}
+      {accounts.length > 0 && (
+        <optgroup label="Bank accounts">
+          {accounts.map((a) => <option key={a.id} value={a.id}>{accountOptionLabel(a)}</option>)}
+        </optgroup>
+      )}
+    </select>
+  );
 }
 
 // Inline category (single) + tags (multi) picker, drawing only from the
@@ -1407,13 +1518,13 @@ function CategoryTagEditor({ catalog, categoryId, tagIds, onSave }) {
   );
 }
 
-function AddBillForm({ cards, catalog, onAdd }) {
+function AddBillForm({ data, catalog, onAdd }) {
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
   const [frequency, setFrequency] = useState("recurring");
   const [dueDay, setDueDay] = useState("1");
   const [dueDate, setDueDate] = useState(todayISO());
-  const [cardId, setCardId] = useState(cards[0]?.id || "");
+  const [cardId, setCardId] = useState(data.cards[0]?.id || (data.bankAccounts || [])[0]?.id || "");
   const [categoryId, setCategoryId] = useState("");
   const [tagIds, setTagIds] = useState([]);
   const categories = catalog?.categories || [];
@@ -1448,10 +1559,7 @@ function AddBillForm({ cards, catalog, onAdd }) {
           <Field label="Due date"><input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
         )}
         <Field label="Usually paid with">
-          <select className="input" value={cardId} onChange={(e) => setCardId(e.target.value)}>
-            <option value="">no card</option>
-            {cards.map((c) => <option key={c.id} value={c.id}>{cardOptionLabel(c)}</option>)}
-          </select>
+          <FundingSourceSelect data={data} value={cardId} onChange={setCardId} allowNone />
         </Field>
         <Field label="Category">
           <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
@@ -1786,15 +1894,15 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-function GlobalTransactionForm({ cards, catalog, addTransaction, onDone }) {
-  const [cardId, setCardId] = useState(cards[0]?.id || "");
+function GlobalTransactionForm({ data, catalog, addTransaction, onDone }) {
+  const [cardId, setCardId] = useState(data.cards[0]?.id || (data.bankAccounts || [])[0]?.id || "");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [type, setType] = useState("charge");
   const [date, setDate] = useState(todayISO());
   const [categoryId, setCategoryId] = useState("");
-  const card = cards.find((c) => c.id === cardId);
-  const isDebit = card && (card.type || "credit") === "debit";
+  const source = fundingSource(data, cardId);
+  const isDebit = source && (source.type || "credit") === "debit";
   const categories = catalog?.categories || [];
 
   const submit = (e) => {
@@ -1807,10 +1915,8 @@ function GlobalTransactionForm({ cards, catalog, addTransaction, onDone }) {
   return (
     <form onSubmit={submit}>
       <div className="form-grid">
-        <Field label="Card">
-          <select className="input" value={cardId} onChange={(e) => setCardId(e.target.value)}>
-            {cards.map((c) => <option key={c.id} value={c.id}>{cardOptionLabel(c)}</option>)}
-          </select>
+        <Field label="Card or account">
+          <FundingSourceSelect data={data} value={cardId} onChange={setCardId} />
         </Field>
         <Field label="Amount"><input className="input" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" /></Field>
         <Field label="Type">
@@ -2014,15 +2120,15 @@ function TransactionForm({ card, catalog, onAdd }) {
 
 /* ---------------------------------- bank accounts page ---------------------------------- */
 
-function BankAccountsPage({ data, addBankAccount, updateBankAccount, deleteBankAccount }) {
+function BankAccountsPage({ data, catalog, addBankAccount, updateBankAccount, deleteBankAccount, addTransaction, deleteTransaction }) {
   const [adding, setAdding] = useState(false);
   const accounts = data.bankAccounts || [];
-  const totalChecking = accounts.filter((a) => a.type !== "savings").reduce((s, a) => s + Number(a.balance), 0);
-  const totalSavings = accounts.filter((a) => a.type === "savings").reduce((s, a) => s + Number(a.balance), 0);
+  const totalChecking = accounts.filter((a) => a.type !== "savings").reduce((s, a) => s + accountBalance(a, data), 0);
+  const totalSavings = accounts.filter((a) => a.type === "savings").reduce((s, a) => s + accountBalance(a, data), 0);
 
   return (
     <div>
-      <PageHeader title="Bank Accounts" subtitle="Checking and savings balances" action={
+      <PageHeader title="Bank Accounts" subtitle="Checking and savings, with a running transaction ledger" action={
         <button className="btn btn-primary" onClick={() => setAdding((v) => !v)}>
           {adding ? <X size={15} /> : <Plus size={15} />} {adding ? "Close" : "Add account"}
         </button>
@@ -2038,61 +2144,146 @@ function BankAccountsPage({ data, addBankAccount, updateBankAccount, deleteBankA
         </div>
       )}
 
-      <Panel title="Accounts">
-        {accounts.length === 0 ? (
-          <Empty text="No accounts yet. Add a checking or savings account to start tracking balances." />
-        ) : (
-          <div className="ledger">
-            {accounts.map((a) => (
-              <AccountRow key={a.id} account={a} updateBankAccount={updateBankAccount} deleteBankAccount={deleteBankAccount} />
-            ))}
-          </div>
-        )}
-      </Panel>
+      {accounts.length === 0 ? (
+        <Panel title="Accounts"><Empty text="No accounts yet. Add a checking or savings account to start tracking its balance and logging bills or transactions directly against it." /></Panel>
+      ) : (
+        accounts.map((a) => (
+          <AccountLedgerPanel
+            key={a.id}
+            account={a}
+            data={data}
+            catalog={catalog}
+            updateBankAccount={updateBankAccount}
+            deleteBankAccount={deleteBankAccount}
+            addTransaction={addTransaction}
+            deleteTransaction={deleteTransaction}
+          />
+        ))
+      )}
     </div>
   );
 }
 
-function AccountRow({ account, updateBankAccount, deleteBankAccount }) {
-  const [editing, setEditing] = useState(false);
+function AccountLedgerPanel({ account, data, catalog, updateBankAccount, deleteBankAccount, addTransaction, deleteTransaction }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editingBalance, setEditingBalance] = useState(false);
   const [balanceDraft, setBalanceDraft] = useState(account.balance);
   const [dateDraft, setDateDraft] = useState(account.updatedDate || todayISO());
   const isSavings = account.type === "savings";
+  const balance = accountBalance(account, data);
+  const txs = (data.accountTransactions || []).filter((t) => t.accountId === account.id).sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  const save = () => {
+  const saveBalance = () => {
     updateBankAccount(account.id, { balance: Number(balanceDraft) || 0, updatedDate: dateDraft });
-    setEditing(false);
+    setEditingBalance(false);
   };
 
   return (
-    <div className="ledger-row wrap">
-      <span className="dot" style={{ background: isSavings ? "var(--brass)" : "var(--bottle)" }} />
-      <span className="col-name">
-        {account.name}
-        <span className={"tag " + (isSavings ? "tag-debit" : "tag-credit")}>{isSavings ? "Savings" : "Checking"}</span>
-      </span>
+    <Panel
+      title={
+        <span>
+          {account.name} <span className={"tag " + (isSavings ? "tag-debit" : "tag-credit")}>{isSavings ? "Savings" : "Checking"}</span>
+        </span>
+      }
+      right={<button className="icon-btn" onClick={() => deleteBankAccount(account.id)} title="Delete account"><Trash2 size={14} /></button>}
+    >
+      <div className="forecast-figures">
+        <div>
+          <div className="figure-label">Balance</div>
+          <div className="figure-value" style={{ color: balance < 0 ? "var(--rust)" : "var(--bottle)" }}>{money(balance)}</div>
+        </div>
+      </div>
 
-      {!editing && (
-        <>
-          <span className="col-date" style={{ width: 120 }}>{account.updatedDate ? `as of ${fmtDate(account.updatedDate)}` : "—"}</span>
-          <span className="col-amount">{money(account.balance)}</span>
-          <button type="button" className="icon-btn" onClick={() => { setBalanceDraft(account.balance); setDateDraft(account.updatedDate || todayISO()); setEditing(true); }} title="Update balance">
-            <Pencil size={13} />
-          </button>
-        </>
-      )}
-
-      {editing && (
-        <div className="paid-summary">
+      {!editingBalance ? (
+        <button
+          type="button"
+          className="btn btn-ghost btn-small"
+          style={{ marginBottom: 12, marginRight: 8 }}
+          onClick={() => { setBalanceDraft(account.balance); setDateDraft(account.updatedDate || todayISO()); setEditingBalance(true); }}
+        >
+          <Pencil size={13} /> Reconcile balance
+        </button>
+      ) : (
+        <div className="paid-summary" style={{ marginBottom: 12 }}>
+          <span>Balance was</span>
           <input type="number" step="0.01" className="input input-small col-amount-input" value={balanceDraft} autoFocus onChange={(e) => setBalanceDraft(e.target.value)} />
+          <span>as of</span>
           <input type="date" className="input input-small" value={dateDraft} onChange={(e) => setDateDraft(e.target.value)} />
-          <button type="button" className="icon-btn" onClick={save} title="Save"><Check size={14} /></button>
-          <button type="button" className="icon-btn" onClick={() => setEditing(false)} title="Cancel"><X size={14} /></button>
+          <button type="button" className="icon-btn" onClick={saveBalance} title="Save"><Check size={14} /></button>
+          <button type="button" className="icon-btn" onClick={() => setEditingBalance(false)} title="Cancel"><X size={14} /></button>
         </div>
       )}
 
-      <button className="icon-btn" onClick={() => deleteBankAccount(account.id)} title="Delete account"><Trash2 size={14} /></button>
-    </div>
+      <button className="btn btn-ghost btn-small" style={{ marginBottom: 12 }} onClick={() => setShowForm((v) => !v)}>
+        {showForm ? <X size={14} /> : <Plus size={14} />} {showForm ? "Close" : "Log a transaction"}
+      </button>
+
+      {showForm && <AccountTransactionForm catalog={catalog} onAdd={(tx) => { addTransaction(account.id, tx); setShowForm(false); }} />}
+
+      {txs.length === 0 ? (
+        <Empty text="No transactions yet. Paid bills assigned to this account will show up here automatically." />
+      ) : (
+        <div className="ledger">
+          {txs.map((t) => (
+            <div className="ledger-row" key={t.id}>
+              <span className="dot" style={{ background: t.type === "charge" ? "var(--rust)" : "var(--bottle)" }} />
+              <span className="col-name">
+                {t.description}
+                {t.categoryId && (catalog?.categories || []).find((c) => c.id === t.categoryId) && (
+                  <Pill item={(catalog.categories || []).find((c) => c.id === t.categoryId)} />
+                )}
+              </span>
+              <span className="col-date">{fmtDate(t.date)}</span>
+              <span className="col-amount" style={{ color: t.type === "charge" ? "var(--rust)" : "var(--bottle)" }}>
+                {t.type === "charge" ? "−" : "+"}{money(t.amount)}
+              </span>
+              <button className="icon-btn" onClick={() => deleteTransaction(t.id)} title="Delete"><Trash2 size={14} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function AccountTransactionForm({ catalog, onAdd }) {
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [type, setType] = useState("charge");
+  const [date, setDate] = useState(todayISO());
+  const [categoryId, setCategoryId] = useState("");
+  const categories = catalog?.categories || [];
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!description || !amount) return;
+    onAdd({ description, amount: Number(amount), type, date, categoryId: categoryId || null });
+    setDescription(""); setAmount("");
+  };
+
+  return (
+    <form className="panel form-panel form-panel-tight" onSubmit={submit}>
+      <div className="form-grid">
+        <Field label="Description"><input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Groceries, car payment…" /></Field>
+        <Field label="Amount"><input className="input" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" /></Field>
+        <Field label="Type">
+          <select className="input" value={type} onChange={(e) => setType(e.target.value)}>
+            <option value="charge">Charge (money out)</option>
+            <option value="payment">Deposit (money in)</option>
+          </select>
+        </Field>
+        <Field label="Date"><input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        {categories.length > 0 && (
+          <Field label="Budget category (optional)">
+            <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+              <option value="">none</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+        )}
+      </div>
+      <button className="btn btn-primary" type="submit"><Plus size={15} /> Add transaction</button>
+    </form>
   );
 }
 
