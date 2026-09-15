@@ -428,6 +428,33 @@ select.input-small { max-width: 160px; }
 
 .rainbow-strip { height: 5px; border-radius: 3px; background: var(--rainbow); }
 
+/* ---------------------------------- pills, swatches, month switcher ---------------------------------- */
+
+.pill {
+  display: inline-flex; align-items: center;
+  font-size: 10.5px; font-weight: 600; color: #fff;
+  padding: 2px 8px; border-radius: 999px; line-height: 1.5;
+  white-space: nowrap;
+}
+
+.swatch-row { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.swatch {
+  width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; cursor: pointer;
+  padding: 0; box-shadow: inset 0 0 0 1px var(--glass-line);
+  transition: transform .15s var(--ease), box-shadow .15s var(--ease);
+}
+.swatch:hover { transform: scale(1.12); }
+.swatch.active { border-color: var(--ink); box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px var(--ink); }
+.swatch-custom { width: 24px; height: 24px; padding: 0; border: none; background: none; cursor: pointer; border-radius: 6px; overflow: hidden; }
+
+.month-switcher {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 16px;
+}
+.month-switcher-label {
+  font-family: 'Plus Jakarta Sans', sans-serif; font-size: 14.5px; font-weight: 700;
+  min-width: 150px; text-align: center;
+}
+
 /* Phones and portrait tablets: the fixed 220px sidebar leaves too little room
    for dense ledger rows, so it becomes an off-canvas drawer opened from a
    slim top bar, and every list row switches from a rigid single line to a
