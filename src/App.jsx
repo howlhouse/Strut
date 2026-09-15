@@ -5,8 +5,11 @@ import {
 import {
   Plus, Trash2, X, Check, LayoutDashboard, Receipt, Ticket, Wallet, Pencil, ExternalLink, Sparkles, Eraser, BarChart3, Landmark, TrendingUp,
   Settings as SettingsIcon, Sun, Moon, Monitor, Bell, PanelLeftClose, PanelLeftOpen, Menu,
+  PiggyBank, ShieldCheck, ChevronLeft, ChevronRight, Tags,
 } from "lucide-react";
 import "./theme.css";
+import { getCatalog, setCatalog as saveCatalog, DEFAULT_CATALOG } from "./catalog.js";
+import { listUserProfiles, listAdminUids, setAdminAccess } from "./adminData.js";
 
 /* ---------------------------------- helpers ---------------------------------- */
 
@@ -114,12 +117,37 @@ const CARD_COLORS = ["#8B5CF6", "#F472B6", "#22B8A8", "#F5A623"];
 const COLOR_BOTTLE = "#8B5CF6";
 const COLOR_BRASS = "#F472B6";
 
+// Curated swatches offered when an admin picks a color for a tag or category.
+const PALETTE = ["#8B5CF6", "#F472B6", "#22B8A8", "#F5A623", "#E11D5E", "#0E9F6E", "#3E9CFF", "#D9820A", "#6C6480", "#34C77B"];
+
 
 
 const DEFAULT_DATA = {
-  cards: [], bills: [], billPayments: {}, layaways: [], cardTransactions: [], bankAccounts: [], incomes: [],
+  cards: [], bills: [], billPayments: {}, layaways: [], cardTransactions: [], bankAccounts: [], incomes: [], budgets: [],
   settings: { remindersEnabled: true, reminderDays: 14 },
 };
+
+/* ---------------------------------- month helpers ---------------------------------- */
+
+const startOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
+const addMonths = (d, n) => new Date(d.getFullYear(), d.getMonth() + n, 1);
+const isSameMonth = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+const monthLongLabel = (d) => d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+// Whether a bill belongs on the ledger for a given month. Recurring bills
+// always get that month's cycle; a one-time bill belongs to the month it's
+// due in, plus (only while looking at the real current month) it stays
+// visible for as long as it's unpaid and overdue, so it doesn't silently
+// vanish once its due month has passed.
+function isBillRelevantForMonth(bill, data, monthDate) {
+  if ((bill.frequency || "recurring") !== "onetime") return true;
+  const due = new Date(bill.dueDate);
+  due.setHours(0, 0, 0, 0);
+  if (isSameMonth(due, monthDate)) return true;
+  if (!isSameMonth(monthDate, new Date())) return false;
+  const payment = data.billPayments[`once-${bill.id}`]?.[bill.id];
+  return !payment?.paid && due < new Date(todayISO());
+}
 
 // A "charge" always increases what a credit card owes, but decreases what's
 // left in a debit/checking account. A "payment" (paying down a card, or
@@ -399,9 +427,68 @@ function computeCashForecast(data, accountIds, horizonDays) {
   };
 }
 
+/* ---------------------------------- net money & budgets ---------------------------------- */
+
+const totalBankBalances = (data) => (data.bankAccounts || []).reduce((s, a) => s + Number(a.balance), 0);
+
+const totalCardBalancesOwed = (data) =>
+  data.cards.filter((c) => (c.type || "credit") === "credit").reduce((sum, c) => {
+    const series = computeForecast(c, data, 1);
+    return sum + (series[0]?.balance || 0);
+  }, 0);
+
+// Everything due (bills and layaway installments) within the next
+// `horizonDays`, unpaid — the same set the dashboard's "due soon" reminder
+// list shows, pulled out here so it can also feed the net-money figure.
+function computeUpcoming(data, horizonDays) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const horizon = new Date(today); horizon.setDate(horizon.getDate() + horizonDays);
+  const items = [];
+  data.bills.forEach((b) => {
+    const { due, key } = billDueInfo(b, today);
+    const paid = data.billPayments[key]?.[b.id]?.paid;
+    if (!paid && due <= horizon) items.push({ kind: "bill", ref: b, key, due, name: b.name, amount: Number(b.amount), cardId: b.cardId });
+  });
+  data.layaways.forEach((f) => {
+    f.installments.forEach((i) => {
+      const due = new Date(i.dueDate);
+      if (!i.paid && due <= horizon) items.push({ kind: "layaway", fest: f, inst: i, due, name: `${f.festivalName} · ${f.itemName || "installment"}`, amount: Number(i.amount), cardId: f.cardId });
+    });
+  });
+  return items.sort((a, b) => a.due - b.due);
+}
+
+// What you'd actually have on hand right now if every bank/card balance
+// settled today and every bill or layaway payment due soon went out:
+// bank balances, minus what's owed on credit cards, minus upcoming unpaid
+// bills/installments within the reminder window.
+function netMoneyNow(data, horizonDays) {
+  const upcomingTotal = computeUpcoming(data, horizonDays).reduce((s, i) => s + i.amount, 0);
+  return totalBankBalances(data) - totalCardBalancesOwed(data) - upcomingTotal;
+}
+
+// Money already charged against a budget's category this real calendar
+// month (not the page's navigable month — a budget is always "this month").
+function budgetSpentThisMonth(budget, data) {
+  const thisMonth = monthKey(new Date());
+  return data.cardTransactions
+    .filter((t) => t.categoryId === budget.categoryId && t.type === "charge" && monthKey(new Date(t.date)) === thisMonth)
+    .reduce((s, t) => s + Number(t.amount), 0);
+}
+
+// Net money after setting aside whatever's left, unspent, in every budget
+// this month — money already spent is already reflected in netMoneyNow.
+function netMoneyPostBudget(data, horizonDays) {
+  const reserved = (data.budgets || []).reduce((sum, b) => {
+    const remaining = Number(b.monthlyAmount) - budgetSpentThisMonth(b, data);
+    return sum + Math.max(0, remaining);
+  }, 0);
+  return netMoneyNow(data, horizonDays) - reserved;
+}
+
 /* ---------------------------------- app ---------------------------------- */
 
-export default function App({ storage, canLoadDemoData, themeMode, setThemeMode }) {
+export default function App({ storage, canLoadDemoData, isAdmin, isOwner, currentUser, themeMode, setThemeMode }) {
   const [data, setData] = useState(DEFAULT_DATA);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("dashboard");
@@ -418,6 +505,12 @@ export default function App({ storage, canLoadDemoData, themeMode, setThemeMode 
   // desktop full/collapsed-rail preference above.
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // The shared tag/category catalog, and which month Dashboard/Bills are
+  // currently browsing (defaults to the real current month on every load).
+  const [catalog, setCatalogState] = useState(DEFAULT_CATALOG);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
+
   useEffect(() => {
     (async () => {
       try {
@@ -428,6 +521,7 @@ export default function App({ storage, canLoadDemoData, themeMode, setThemeMode 
       }
       setLoaded(true);
     })();
+    getCatalog().then((c) => { setCatalogState(c); setCatalogLoaded(true); });
   }, []);
 
   useEffect(() => {
@@ -436,6 +530,40 @@ export default function App({ storage, canLoadDemoData, themeMode, setThemeMode 
   }, [data, loaded]);
 
   const update = (fn) => setData((prev) => fn(structuredClone(prev)));
+
+  // Catalog edits (admin only, enforced by firestore.rules) replace the
+  // whole shared doc — it's tiny, so this mirrors `update()`'s
+  // clone-mutate-persist pattern without needing a merge strategy.
+  const updateCatalog = (fn) => {
+    setCatalogState((prev) => {
+      const next = fn(structuredClone(prev));
+      saveCatalog(next).catch(() => {});
+      return next;
+    });
+  };
+  const addCategory = (cat) => updateCatalog((c) => { c.categories.push({ id: uid(), ...cat }); return c; });
+  const updateCategoryEntry = (id, patch) => updateCatalog((c) => {
+    const cat = c.categories.find((x) => x.id === id);
+    if (cat) Object.assign(cat, patch);
+    return c;
+  });
+  const deleteCategoryEntry = (id) => updateCatalog((c) => { c.categories = c.categories.filter((x) => x.id !== id); return c; });
+  const addTag = (tag) => updateCatalog((c) => { c.tags.push({ id: uid(), ...tag }); return c; });
+  const updateTagEntry = (id, patch) => updateCatalog((c) => {
+    const t = c.tags.find((x) => x.id === id);
+    if (t) Object.assign(t, patch);
+    return c;
+  });
+  const deleteTagEntry = (id) => updateCatalog((c) => { c.tags = c.tags.filter((x) => x.id !== id); return c; });
+
+  /* ---- budget actions ---- */
+  const addBudget = (budget) => update((d) => { d.budgets = d.budgets || []; d.budgets.push({ id: uid(), ...budget }); return d; });
+  const updateBudget = (id, patch) => update((d) => {
+    const b = (d.budgets || []).find((x) => x.id === id);
+    if (b) Object.assign(b, patch);
+    return d;
+  });
+  const deleteBudget = (id) => update((d) => { d.budgets = (d.budgets || []).filter((b) => b.id !== id); return d; });
 
   const cardName = (id) => data.cards.find((c) => c.id === id)?.name || "—";
   const cardColor = (id) => {
@@ -466,7 +594,7 @@ export default function App({ storage, canLoadDemoData, themeMode, setThemeMode 
       const amt = amount != null && amount !== "" ? Number(amount) : Number(bill.amount);
       const txId = uid();
       if (cardId) {
-        d.cardTransactions.push({ id: txId, cardId, date: paidDate, amount: amt, type: "charge", description: bill.name, source: "bill", ref: bill.id });
+        d.cardTransactions.push({ id: txId, cardId, date: paidDate, amount: amt, type: "charge", description: bill.name, source: "bill", ref: bill.id, categoryId: bill.categoryId || null });
       }
       d.billPayments[key][bill.id] = { paid: true, paidDate, cardId, amount: amt, txId: cardId ? txId : null };
       // Keep the bill's default estimate current so next cycle starts from the latest known amount.
@@ -584,12 +712,14 @@ export default function App({ storage, canLoadDemoData, themeMode, setThemeMode 
   const nav = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "bills", label: "Bills", icon: Receipt },
+    { id: "budgets", label: "Budgets", icon: PiggyBank },
     { id: "layaway", label: "Layaway Payments", icon: Ticket },
     { id: "cards", label: "Card ledgers", icon: Wallet },
     { id: "accounts", label: "Bank Accounts", icon: Landmark },
     { id: "forecast", label: "Forecast", icon: TrendingUp },
     { id: "analytics", label: "Analytics", icon: BarChart3 },
     { id: "settings", label: "Settings", icon: SettingsIcon },
+    ...(isAdmin ? [{ id: "admin", label: "Admin Console", icon: ShieldCheck }] : []),
   ];
 
   const goTo = (id) => {
@@ -635,10 +765,45 @@ export default function App({ storage, canLoadDemoData, themeMode, setThemeMode 
 
       <main className="main">
         {tab === "dashboard" && (
-          <Dashboard data={data} cardName={cardName} cardColor={cardColor} toggleBillPaid={toggleBillPaid} toggleInstallmentPaid={toggleInstallmentPaid} loadDemo={loadDemo} canLoadDemoData={canLoadDemoData} addTransaction={addTransaction} />
+          <Dashboard
+            data={data}
+            catalog={catalog}
+            cardName={cardName}
+            cardColor={cardColor}
+            toggleBillPaid={toggleBillPaid}
+            toggleInstallmentPaid={toggleInstallmentPaid}
+            updateBill={updateBill}
+            deleteBill={deleteBill}
+            loadDemo={loadDemo}
+            canLoadDemoData={canLoadDemoData}
+            addTransaction={addTransaction}
+            selectedMonth={selectedMonth}
+            setSelectedMonth={setSelectedMonth}
+          />
         )}
         {tab === "bills" && (
-          <BillsPage data={data} addBill={addBill} updateBill={updateBill} deleteBill={deleteBill} toggleBillPaid={toggleBillPaid} cardColor={cardColor} />
+          <BillsPage
+            data={data}
+            catalog={catalog}
+            addBill={addBill}
+            updateBill={updateBill}
+            deleteBill={deleteBill}
+            toggleBillPaid={toggleBillPaid}
+            cardColor={cardColor}
+            selectedMonth={selectedMonth}
+            setSelectedMonth={setSelectedMonth}
+          />
+        )}
+        {tab === "budgets" && (
+          <BudgetsPage
+            data={data}
+            catalog={catalog}
+            addBudget={addBudget}
+            updateBudget={updateBudget}
+            deleteBudget={deleteBudget}
+            addCategory={addCategory}
+            isAdmin={isAdmin}
+          />
         )}
         {tab === "layaway" && (
           <LayawayPage
@@ -654,7 +819,7 @@ export default function App({ storage, canLoadDemoData, themeMode, setThemeMode 
           />
         )}
         {tab === "cards" && (
-          <CardsPage data={data} addCard={addCard} deleteCard={deleteCard} addTransaction={addTransaction} deleteTransaction={deleteTransaction} cardColor={cardColor} />
+          <CardsPage data={data} catalog={catalog} addCard={addCard} deleteCard={deleteCard} addTransaction={addTransaction} deleteTransaction={deleteTransaction} cardColor={cardColor} />
         )}
         {tab === "accounts" && (
           <BankAccountsPage data={data} addBankAccount={addBankAccount} updateBankAccount={updateBankAccount} deleteBankAccount={deleteBankAccount} />
@@ -674,6 +839,19 @@ export default function App({ storage, canLoadDemoData, themeMode, setThemeMode 
             clearAll={clearAll}
           />
         )}
+        {tab === "admin" && isAdmin && (
+          <AdminPage
+            catalog={catalog}
+            addCategory={addCategory}
+            updateCategoryEntry={updateCategoryEntry}
+            deleteCategoryEntry={deleteCategoryEntry}
+            addTag={addTag}
+            updateTagEntry={updateTagEntry}
+            deleteTagEntry={deleteTagEntry}
+            isOwner={isOwner}
+            currentUser={currentUser}
+          />
+        )}
       </main>
     </div>
   );
@@ -681,29 +859,15 @@ export default function App({ storage, canLoadDemoData, themeMode, setThemeMode 
 
 /* ---------------------------------- dashboard ---------------------------------- */
 
-function Dashboard({ data, cardName, cardColor, toggleBillPaid, toggleInstallmentPaid, loadDemo, canLoadDemoData, addTransaction }) {
+function Dashboard({ data, catalog, cardName, cardColor, toggleBillPaid, toggleInstallmentPaid, updateBill, deleteBill, loadDemo, canLoadDemoData, addTransaction, selectedMonth, setSelectedMonth }) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const reminderDays = data.settings?.reminderDays ?? 14;
   const remindersEnabled = data.settings?.remindersEnabled !== false;
-  const horizon = new Date(today); horizon.setDate(horizon.getDate() + reminderDays);
   const [modalOpen, setModalOpen] = useState(false);
   const empty = isEmptyData(data);
+  const viewingCurrentMonth = isSameMonth(selectedMonth, today);
 
-  const upcoming = useMemo(() => {
-    const items = [];
-    data.bills.forEach((b) => {
-      const { due, key } = billDueInfo(b, today);
-      const paid = data.billPayments[key]?.[b.id]?.paid;
-      if (!paid && due <= horizon) items.push({ kind: "bill", ref: b, key, due, name: b.name, amount: b.amount, cardId: b.cardId });
-    });
-    data.layaways.forEach((f) => {
-      f.installments.forEach((i) => {
-        const due = new Date(i.dueDate);
-        if (!i.paid && due <= horizon) items.push({ kind: "layaway", fest: f, inst: i, due, name: `${f.festivalName} · ${f.itemName || "installment"}`, amount: i.amount, cardId: f.cardId });
-      });
-    });
-    return items.sort((a, b) => a.due - b.due);
-  }, [data]);
+  const upcoming = useMemo(() => computeUpcoming(data, reminderDays), [data, reminderDays]);
 
   const unpaidTotal = useMemo(() => {
     return data.bills.reduce((sum, b) => {
@@ -713,12 +877,13 @@ function Dashboard({ data, cardName, cardColor, toggleBillPaid, toggleInstallmen
     }, 0);
   }, [data]);
 
-  const totalOwed = useMemo(() => {
-    return data.cards.filter((c) => (c.type || "credit") === "credit").reduce((sum, c) => {
-      const series = computeForecast(c, data, 1);
-      return sum + (series[0]?.balance || 0);
-    }, 0);
-  }, [data]);
+  const totalOwed = useMemo(() => totalCardBalancesOwed(data), [data]);
+  const netMoney = useMemo(() => netMoneyNow(data, reminderDays), [data, reminderDays]);
+
+  const monthBills = useMemo(
+    () => data.bills.filter((b) => isBillRelevantForMonth(b, data, selectedMonth)).sort((a, b) => billDueInfo(a, selectedMonth).due - billDueInfo(b, selectedMonth).due),
+    [data, selectedMonth]
+  );
 
   const activeLayaways = data.layaways.filter((f) => f.installments.some((i) => !i.paid)).length;
 
@@ -754,39 +919,59 @@ function Dashboard({ data, cardName, cardColor, toggleBillPaid, toggleInstallmen
       <div className="stat-row">
         <Stat label="Owed on credit cards" value={money(totalOwed)} tone="rust" />
         <Stat label="Total unpaid bills" value={money(unpaidTotal)} tone="ink" />
+        <Stat label="Net money" value={money(netMoney)} tone={netMoney >= 0 ? "bottle" : "rust"} />
         <Stat label="Active layaways" value={activeLayaways} tone="brass" />
       </div>
+      <p className="page-footnote" style={{ marginBottom: 16 }}>
+        Net money is your bank balances minus what's owed on credit cards minus everything due in the next {reminderDays} days — always as of today, regardless of the month you're browsing below.
+      </p>
 
-      {remindersEnabled ? (
-        <Panel title={`Due in the next ${reminderDays} days`}>
-          {upcoming.length === 0 ? (
-            <Empty text={`Nothing due in the next ${reminderDays} days. Add a bill or a layaway payment to start tracking.`} />
+      <MonthSwitcher month={selectedMonth} setMonth={setSelectedMonth} />
+
+      {viewingCurrentMonth ? (
+        remindersEnabled ? (
+          <Panel title={`Due in the next ${reminderDays} days`}>
+            {upcoming.length === 0 ? (
+              <Empty text={`Nothing due in the next ${reminderDays} days. Add a bill or a layaway payment to start tracking.`} />
+            ) : (
+              <div className="ledger">
+                {upcoming.map((item, idx) => (
+                  <div className="ledger-row" key={idx}>
+                    <span className="dot" style={{ background: item.cardId ? cardColor(item.cardId) : "var(--line)" }} />
+                    <span className="col-name">{item.name}</span>
+                    <span className="col-card">{item.cardId ? cardName(item.cardId) : "no card set"}</span>
+                    <span className="col-date" style={{ color: item.due < today ? "var(--rust)" : "var(--ink-soft)" }}>{fmtDate(item.due)}</span>
+                    <span className="col-amount">{money(item.amount)}</span>
+                    <button
+                      className="btn btn-ghost btn-small"
+                      onClick={() =>
+                        item.kind === "bill"
+                          ? toggleBillPaid(item.ref, item.key, true, todayISO(), item.cardId)
+                          : toggleInstallmentPaid(item.fest, item.inst, true, todayISO())
+                      }
+                    >
+                      <Check size={14} /> Mark paid
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
+        ) : (
+          <p className="page-footnote">Dashboard reminders are turned off. Turn them back on in <strong>Settings</strong>.</p>
+        )
+      ) : (
+        <Panel title={`Bills for ${monthLongLabel(selectedMonth)}`}>
+          {monthBills.length === 0 ? (
+            <Empty text="No bills fall in this month." />
           ) : (
             <div className="ledger">
-              {upcoming.map((item, idx) => (
-                <div className="ledger-row" key={idx}>
-                  <span className="dot" style={{ background: item.cardId ? cardColor(item.cardId) : "var(--line)" }} />
-                  <span className="col-name">{item.name}</span>
-                  <span className="col-card">{item.cardId ? cardName(item.cardId) : "no card set"}</span>
-                  <span className="col-date" style={{ color: item.due < today ? "var(--rust)" : "var(--ink-soft)" }}>{fmtDate(item.due)}</span>
-                  <span className="col-amount">{money(item.amount)}</span>
-                  <button
-                    className="btn btn-ghost btn-small"
-                    onClick={() =>
-                      item.kind === "bill"
-                        ? toggleBillPaid(item.ref, item.key, true, todayISO(), item.cardId)
-                        : toggleInstallmentPaid(item.fest, item.inst, true, todayISO())
-                    }
-                  >
-                    <Check size={14} /> Mark paid
-                  </button>
-                </div>
+              {monthBills.map((bill) => (
+                <BillRow key={bill.id} bill={bill} data={data} catalog={catalog} referenceDate={selectedMonth} toggleBillPaid={toggleBillPaid} updateBill={updateBill} deleteBill={deleteBill} cardColor={cardColor} />
               ))}
             </div>
           )}
         </Panel>
-      ) : (
-        <p className="page-footnote">Dashboard reminders are turned off. Turn them back on in <strong>Settings</strong>.</p>
       )}
 
       {modalOpen && (
@@ -794,7 +979,7 @@ function Dashboard({ data, cardName, cardColor, toggleBillPaid, toggleInstallmen
           {data.cards.length === 0 ? (
             <p className="empty">Add a card first in Card ledgers.</p>
           ) : (
-            <GlobalTransactionForm cards={data.cards} addTransaction={addTransaction} onDone={() => setModalOpen(false)} />
+            <GlobalTransactionForm cards={data.cards} catalog={catalog} addTransaction={addTransaction} onDone={() => setModalOpen(false)} />
           )}
         </Modal>
       )}
@@ -802,15 +987,32 @@ function Dashboard({ data, cardName, cardColor, toggleBillPaid, toggleInstallmen
   );
 }
 
+function MonthSwitcher({ month, setMonth }) {
+  const isCurrent = isSameMonth(month, new Date());
+  return (
+    <div className="month-switcher">
+      <button className="icon-btn" onClick={() => setMonth(addMonths(month, -1))} title="Previous month"><ChevronLeft size={16} /></button>
+      <span className="month-switcher-label">{monthLongLabel(month)}</span>
+      <button className="icon-btn" onClick={() => setMonth(addMonths(month, 1))} title="Next month"><ChevronRight size={16} /></button>
+      {!isCurrent && (
+        <button className="btn btn-ghost btn-small" onClick={() => setMonth(startOfMonth(new Date()))}>Today</button>
+      )}
+    </div>
+  );
+}
+
 /* ---------------------------------- bills page ---------------------------------- */
 
-function BillsPage({ data, addBill, updateBill, deleteBill, toggleBillPaid, cardColor }) {
+function BillsPage({ data, catalog, addBill, updateBill, deleteBill, toggleBillPaid, cardColor, selectedMonth, setSelectedMonth }) {
   const [adding, setAdding] = useState(false);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
 
   const sorted = useMemo(
-    () => data.bills.slice().sort((a, b) => billDueInfo(a, today).due - billDueInfo(b, today).due),
-    [data.bills]
+    () =>
+      data.bills
+        .filter((b) => isBillRelevantForMonth(b, data, selectedMonth))
+        .slice()
+        .sort((a, b) => billDueInfo(a, selectedMonth).due - billDueInfo(b, selectedMonth).due),
+    [data, selectedMonth]
   );
 
   return (
@@ -821,15 +1023,19 @@ function BillsPage({ data, addBill, updateBill, deleteBill, toggleBillPaid, card
         </button>
       } />
 
-      {adding && <AddBillForm cards={data.cards} onAdd={(b) => { addBill(b); setAdding(false); }} />}
+      {adding && <AddBillForm cards={data.cards} catalog={catalog} onAdd={(b) => { addBill(b); setAdding(false); }} />}
 
-      <Panel title="All bills">
+      <MonthSwitcher month={selectedMonth} setMonth={setSelectedMonth} />
+
+      <Panel title={`Bills for ${monthLongLabel(selectedMonth)}`}>
         {data.bills.length === 0 ? (
           <Empty text="No bills yet. Add your first bill — recurring or one-time — to start tracking payments." />
+        ) : sorted.length === 0 ? (
+          <Empty text="No bills fall in this month." />
         ) : (
           <div className="ledger">
             {sorted.map((bill) => (
-              <BillRow key={bill.id} bill={bill} data={data} toggleBillPaid={toggleBillPaid} updateBill={updateBill} deleteBill={deleteBill} cardColor={cardColor} />
+              <BillRow key={bill.id} bill={bill} data={data} catalog={catalog} referenceDate={selectedMonth} toggleBillPaid={toggleBillPaid} updateBill={updateBill} deleteBill={deleteBill} cardColor={cardColor} />
             ))}
           </div>
         )}
@@ -839,14 +1045,15 @@ function BillsPage({ data, addBill, updateBill, deleteBill, toggleBillPaid, card
   );
 }
 
-function BillRow({ bill, data, toggleBillPaid, updateBill, deleteBill, cardColor }) {
-  const { due, key } = billDueInfo(bill);
+function BillRow({ bill, data, catalog, referenceDate, toggleBillPaid, updateBill, deleteBill, cardColor }) {
+  const { due, key } = billDueInfo(bill, referenceDate);
   const payment = data.billPayments[key]?.[bill.id];
   const paid = !!payment?.paid;
   const overdue = !paid && due < new Date(todayISO());
   const isRecurring = (bill.frequency || "recurring") !== "onetime";
   const [editingPaid, setEditingPaid] = useState(false);
   const [editingAmount, setEditingAmount] = useState(false);
+  const [editingTags, setEditingTags] = useState(false);
   const [amountDraft, setAmountDraft] = useState(bill.amount);
   const [paidDate, setPaidDate] = useState(payment?.paidDate || todayISO());
   const [cardId, setCardId] = useState(payment?.cardId || bill.cardId || "");
@@ -865,6 +1072,8 @@ function BillRow({ bill, data, toggleBillPaid, updateBill, deleteBill, cardColor
   };
 
   const paidCardName = data.cards.find((c) => c.id === payment?.cardId)?.name;
+  const category = (catalog?.categories || []).find((c) => c.id === bill.categoryId);
+  const tags = (catalog?.tags || []).filter((t) => (bill.tagIds || []).includes(t.id));
 
   return (
     <div className="ledger-row wrap">
@@ -872,9 +1081,15 @@ function BillRow({ bill, data, toggleBillPaid, updateBill, deleteBill, cardColor
       <span className="col-name">
         {bill.name}
         <span className="freq-tag">{isRecurring ? "monthly" : "one-time"}</span>
+        {category && <Pill item={category} />}
+        {tags.map((t) => <Pill key={t.id} item={t} />)}
       </span>
       <span className="col-date" style={{ color: overdue ? "var(--rust)" : "var(--ink-soft)" }}>due {fmtDate(due)}</span>
       <span className="col-amount">{money(bill.amount)}</span>
+
+      <button type="button" className="icon-btn" onClick={() => setEditingTags((v) => !v)} title={editingTags ? "Cancel" : "Edit tags & category"}>
+        {editingTags ? <X size={13} /> : <Tags size={13} />}
+      </button>
 
       {!paid && (
         <button type="button" className="icon-btn" onClick={() => { setAmountDraft(bill.amount); setEditingAmount((v) => !v); }} title={editingAmount ? "Cancel" : "Edit amount owed"}>
@@ -886,6 +1101,15 @@ function BillRow({ bill, data, toggleBillPaid, updateBill, deleteBill, cardColor
         <input type="checkbox" checked={paid} onChange={handleCheck} />
         <span className={paid ? "tag tag-paid" : "tag tag-unpaid"}>{paid ? "Paid" : overdue ? "Overdue" : "Unpaid"}</span>
       </label>
+
+      {editingTags && (
+        <CategoryTagEditor
+          catalog={catalog}
+          categoryId={bill.categoryId}
+          tagIds={bill.tagIds || []}
+          onSave={(patch) => { updateBill(bill.id, patch); setEditingTags(false); }}
+        />
+      )}
 
       {!paid && editingAmount && (
         <div className="paid-summary">
@@ -919,22 +1143,78 @@ function BillRow({ bill, data, toggleBillPaid, updateBill, deleteBill, cardColor
   );
 }
 
-function AddBillForm({ cards, onAdd }) {
+// Small colored pill for a shared catalog tag/category entry.
+function Pill({ item }) {
+  return <span className="pill" style={{ background: item.color || "var(--ink-soft)" }}>{item.name}</span>;
+}
+
+// Inline category (single) + tags (multi) picker, drawing only from the
+// shared admin-curated catalog — reused by BillRow.
+function CategoryTagEditor({ catalog, categoryId, tagIds, onSave }) {
+  const [catId, setCatId] = useState(categoryId || "");
+  const [selectedTagIds, setSelectedTagIds] = useState(tagIds);
+  const categories = catalog?.categories || [];
+  const tags = catalog?.tags || [];
+
+  const toggleTag = (id) => setSelectedTagIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  return (
+    <div className="edit-form" style={{ width: "100%" }}>
+      <Field label="Category">
+        <select className="input" value={catId} onChange={(e) => setCatId(e.target.value)}>
+          <option value="">no category</option>
+          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </Field>
+      {tags.length > 0 && (
+        <Field label="Tags">
+          <div className="chip-row">
+            {tags.map((t) => (
+              <button
+                type="button"
+                key={t.id}
+                className={"chip" + (selectedTagIds.includes(t.id) ? " active" : "")}
+                style={selectedTagIds.includes(t.id) ? { background: t.color, borderColor: t.color, color: "#fff" } : {}}
+                onClick={() => toggleTag(t.id)}
+              >
+                {t.name}
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
+      {categories.length === 0 && tags.length === 0 && (
+        <p className="hint">No tags or categories yet — an admin can add some in the Admin Console.</p>
+      )}
+      <button type="button" className="btn btn-primary btn-small" onClick={() => onSave({ categoryId: catId || null, tagIds: selectedTagIds })}>
+        <Check size={13} /> Save
+      </button>
+    </div>
+  );
+}
+
+function AddBillForm({ cards, catalog, onAdd }) {
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
   const [frequency, setFrequency] = useState("recurring");
   const [dueDay, setDueDay] = useState("1");
   const [dueDate, setDueDate] = useState(todayISO());
   const [cardId, setCardId] = useState(cards[0]?.id || "");
+  const [categoryId, setCategoryId] = useState("");
+  const [tagIds, setTagIds] = useState([]);
+  const categories = catalog?.categories || [];
+  const tags = catalog?.tags || [];
+
+  const toggleTag = (id) => setTagIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const submit = (e) => {
     e.preventDefault();
     if (!name || !amount) return;
-    const bill = { name, amount: Number(amount), cardId, frequency };
+    const bill = { name, amount: Number(amount), cardId, frequency, categoryId: categoryId || null, tagIds };
     if (frequency === "recurring") bill.dueDay = Number(dueDay);
     else bill.dueDate = dueDate;
     onAdd(bill);
-    setName(""); setAmount(""); setDueDay("1"); setDueDate(todayISO());
+    setName(""); setAmount(""); setDueDay("1"); setDueDate(todayISO()); setCategoryId(""); setTagIds([]);
   };
 
   return (
@@ -959,7 +1239,30 @@ function AddBillForm({ cards, onAdd }) {
             {cards.map((c) => <option key={c.id} value={c.id}>{cardOptionLabel(c)}</option>)}
           </select>
         </Field>
+        <Field label="Category">
+          <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <option value="">no category</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
       </div>
+      {tags.length > 0 && (
+        <Field label="Tags">
+          <div className="chip-row">
+            {tags.map((t) => (
+              <button
+                type="button"
+                key={t.id}
+                className={"chip" + (tagIds.includes(t.id) ? " active" : "")}
+                style={tagIds.includes(t.id) ? { background: t.color, borderColor: t.color, color: "#fff" } : {}}
+                onClick={() => toggleTag(t.id)}
+              >
+                {t.name}
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
       <button className="btn btn-primary" type="submit"><Plus size={15} /> Add bill</button>
     </form>
   );
@@ -1269,19 +1572,21 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-function GlobalTransactionForm({ cards, addTransaction, onDone }) {
+function GlobalTransactionForm({ cards, catalog, addTransaction, onDone }) {
   const [cardId, setCardId] = useState(cards[0]?.id || "");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [type, setType] = useState("charge");
   const [date, setDate] = useState(todayISO());
+  const [categoryId, setCategoryId] = useState("");
   const card = cards.find((c) => c.id === cardId);
   const isDebit = card && (card.type || "credit") === "debit";
+  const categories = catalog?.categories || [];
 
   const submit = (e) => {
     e.preventDefault();
     if (!cardId || !description || !amount) return;
-    addTransaction(cardId, { description, amount: Number(amount), type, date });
+    addTransaction(cardId, { description, amount: Number(amount), type, date, categoryId: categoryId || null });
     onDone();
   };
 
@@ -1301,6 +1606,14 @@ function GlobalTransactionForm({ cards, addTransaction, onDone }) {
           </select>
         </Field>
         <Field label="Date"><input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        {categories.length > 0 && (
+          <Field label="Budget category (optional)">
+            <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+              <option value="">none</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+        )}
       </div>
       <Field label="Description"><input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Groceries, card payment, paycheck…" /></Field>
       <button className="btn btn-primary" type="submit"><Plus size={15} /> Add transaction</button>
@@ -1310,7 +1623,7 @@ function GlobalTransactionForm({ cards, addTransaction, onDone }) {
 
 /* ---------------------------------- cards page ---------------------------------- */
 
-function CardsPage({ data, addCard, deleteCard, addTransaction, deleteTransaction, cardColor }) {
+function CardsPage({ data, catalog, addCard, deleteCard, addTransaction, deleteTransaction, cardColor }) {
   const [adding, setAdding] = useState(false);
 
   return (
@@ -1327,7 +1640,7 @@ function CardsPage({ data, addCard, deleteCard, addTransaction, deleteTransactio
         <Panel title="Cards"><Empty text="No cards yet. Add a credit or debit card to start a running ledger and forecast." /></Panel>
       ) : (
         data.cards.map((c) => (
-          <CardLedgerPanel key={c.id} card={c} data={data} addTransaction={addTransaction} deleteTransaction={deleteTransaction} deleteCard={deleteCard} color={cardColor(c.id)} />
+          <CardLedgerPanel key={c.id} card={c} data={data} catalog={catalog} addTransaction={addTransaction} deleteTransaction={deleteTransaction} deleteCard={deleteCard} color={cardColor(c.id)} />
         ))
       )}
     </div>
@@ -1382,7 +1695,7 @@ function AddCardForm({ onAdd }) {
   );
 }
 
-function CardLedgerPanel({ card, data, addTransaction, deleteTransaction, deleteCard, color }) {
+function CardLedgerPanel({ card, data, catalog, addTransaction, deleteTransaction, deleteCard, color }) {
   const [showForm, setShowForm] = useState(false);
   const isDebit = (card.type || "credit") === "debit";
   const series = computeForecast(card, data, 1);
@@ -1415,7 +1728,7 @@ function CardLedgerPanel({ card, data, addTransaction, deleteTransaction, delete
         {showForm ? <X size={14} /> : <Plus size={14} />} {showForm ? "Close" : "Add transaction"}
       </button>
 
-      {showForm && <TransactionForm card={card} onAdd={(tx) => { addTransaction(card.id, tx); setShowForm(false); }} />}
+      {showForm && <TransactionForm card={card} catalog={catalog} onAdd={(tx) => { addTransaction(card.id, tx); setShowForm(false); }} />}
 
       {txs.length === 0 ? (
         <Empty text="No transactions yet. Paid bills and layaway installments assigned to this card will show up here automatically." />
@@ -1424,7 +1737,12 @@ function CardLedgerPanel({ card, data, addTransaction, deleteTransaction, delete
           {txs.map((t) => (
             <div className="ledger-row" key={t.id}>
               <span className="dot" style={{ background: t.type === "charge" ? "var(--rust)" : "var(--bottle)" }} />
-              <span className="col-name">{t.description}</span>
+              <span className="col-name">
+                {t.description}
+                {t.categoryId && (catalog?.categories || []).find((c) => c.id === t.categoryId) && (
+                  <Pill item={(catalog.categories || []).find((c) => c.id === t.categoryId)} />
+                )}
+              </span>
               <span className="col-date">{fmtDate(t.date)}</span>
               <span className="col-amount" style={{ color: t.type === "charge" ? "var(--rust)" : "var(--bottle)" }}>
                 {t.type === "charge" ? "−" : "+"}{money(t.amount)}
@@ -1438,17 +1756,19 @@ function CardLedgerPanel({ card, data, addTransaction, deleteTransaction, delete
   );
 }
 
-function TransactionForm({ card, onAdd }) {
+function TransactionForm({ card, catalog, onAdd }) {
   const isDebit = (card.type || "credit") === "debit";
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [type, setType] = useState("charge");
   const [date, setDate] = useState(todayISO());
+  const [categoryId, setCategoryId] = useState("");
+  const categories = catalog?.categories || [];
 
   const submit = (e) => {
     e.preventDefault();
     if (!description || !amount) return;
-    onAdd({ description, amount: Number(amount), type, date });
+    onAdd({ description, amount: Number(amount), type, date, categoryId: categoryId || null });
     setDescription(""); setAmount("");
   };
 
@@ -1464,6 +1784,14 @@ function TransactionForm({ card, onAdd }) {
           </select>
         </Field>
         <Field label="Date"><input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        {categories.length > 0 && (
+          <Field label="Budget category (optional)">
+            <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+              <option value="">none</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+        )}
       </div>
       <button className="btn btn-primary" type="submit"><Plus size={15} /> Add transaction</button>
     </form>
@@ -1782,6 +2110,162 @@ function AddIncomeForm({ accounts, onAdd }) {
   );
 }
 
+/* ---------------------------------- budgets page ---------------------------------- */
+
+function BudgetsPage({ data, catalog, addBudget, updateBudget, deleteBudget, addCategory, isAdmin }) {
+  const [adding, setAdding] = useState(false);
+  const budgets = data.budgets || [];
+  const reminderDays = data.settings?.reminderDays ?? 14;
+  const postBudget = useMemo(() => netMoneyPostBudget(data, reminderDays), [data, reminderDays]);
+  const totalMonthly = budgets.reduce((s, b) => s + Number(b.monthlyAmount), 0);
+  const totalSpent = budgets.reduce((s, b) => s + budgetSpentThisMonth(b, data), 0);
+
+  const availableCategories = (catalog?.categories || []).filter((c) => !budgets.some((b) => b.categoryId === c.id));
+
+  return (
+    <div>
+      <PageHeader title="Budgets" subtitle="Monthly spending targets by category" action={
+        <button className="btn btn-primary" onClick={() => setAdding((v) => !v)}>
+          {adding ? <X size={15} /> : <Plus size={15} />} {adding ? "Close" : "Add budget"}
+        </button>
+      } />
+
+      <div className="stat-row">
+        <Stat label="Total budgeted this month" value={money(totalMonthly)} tone="ink" />
+        <Stat label="Spent so far this month" value={money(totalSpent)} tone={totalSpent > totalMonthly ? "rust" : "brass"} />
+        <Stat label="Net money post-budget" value={money(postBudget)} tone={postBudget >= 0 ? "bottle" : "rust"} />
+      </div>
+      <p className="page-footnote" style={{ marginBottom: 16 }}>
+        Net money post-budget takes today's net money and sets aside whatever's left, unspent, in every budget below — money already spent is already reflected in net money.
+      </p>
+
+      {adding && (
+        <AddBudgetForm
+          availableCategories={availableCategories}
+          isAdmin={isAdmin}
+          onAdd={(b) => { addBudget(b); setAdding(false); }}
+          onAddCategory={addCategory}
+        />
+      )}
+
+      <Panel title="Budgets">
+        {budgets.length === 0 ? (
+          <Empty text="No budgets yet. Add a category — like Gas or Groceries — and a monthly amount to start tracking it." />
+        ) : (
+          <div className="ledger">
+            {budgets.map((b) => (
+              <BudgetRow key={b.id} budget={b} data={data} catalog={catalog} updateBudget={updateBudget} deleteBudget={deleteBudget} />
+            ))}
+          </div>
+        )}
+      </Panel>
+      <p className="page-footnote">
+        Transactions on the <strong>Card ledgers</strong> and <strong>Dashboard</strong> pages count against a budget when you pick that budget's category on them.
+      </p>
+    </div>
+  );
+}
+
+function BudgetRow({ budget, data, catalog, updateBudget, deleteBudget }) {
+  const category = (catalog?.categories || []).find((c) => c.id === budget.categoryId);
+  const spent = budgetSpentThisMonth(budget, data);
+  const monthly = Number(budget.monthlyAmount);
+  const remaining = monthly - spent;
+  const pct = monthly ? Math.min(100, Math.round((spent / monthly) * 100)) : 0;
+  const [editing, setEditing] = useState(false);
+  const [amountDraft, setAmountDraft] = useState(budget.monthlyAmount);
+
+  const save = () => {
+    updateBudget(budget.id, { monthlyAmount: Number(amountDraft) || 0 });
+    setEditing(false);
+  };
+
+  return (
+    <div className="ledger-row wrap" style={{ flexDirection: "column", alignItems: "stretch" }}>
+      <div className="ledger-row" style={{ borderTop: "none", padding: "0 0 6px" }}>
+        <span className="dot" style={{ background: category?.color || "var(--line)" }} />
+        <span className="col-name">{category ? <Pill item={category} /> : "unknown category"}</span>
+        <span className="col-date" style={{ color: remaining < 0 ? "var(--rust)" : "var(--ink-soft)" }}>{money(spent)} spent</span>
+        {editing ? (
+          <div className="paid-summary">
+            <input type="number" step="0.01" className="input input-small col-amount-input" value={amountDraft} autoFocus onChange={(e) => setAmountDraft(e.target.value)} />
+            <button type="button" className="icon-btn" onClick={save} title="Save"><Check size={14} /></button>
+          </div>
+        ) : (
+          <>
+            <span className="col-amount">{money(monthly)}/mo</span>
+            <button type="button" className="icon-btn" onClick={() => { setAmountDraft(budget.monthlyAmount); setEditing(true); }} title="Edit monthly amount"><Pencil size={13} /></button>
+          </>
+        )}
+        <button className="icon-btn" onClick={() => deleteBudget(budget.id)} title="Remove budget"><Trash2 size={14} /></button>
+      </div>
+      <div className="progress-row" style={{ marginBottom: 4 }}>
+        <div className="progress-track"><div className="progress-fill" style={{ width: `${pct}%`, background: remaining < 0 ? "var(--rust)" : (category?.color || "var(--brand)") }} /></div>
+        <span className="progress-label">{remaining >= 0 ? `${money(remaining)} left` : `${money(-remaining)} over`}</span>
+      </div>
+    </div>
+  );
+}
+
+function AddBudgetForm({ availableCategories, isAdmin, onAdd, onAddCategory }) {
+  const [categoryId, setCategoryId] = useState(availableCategories[0]?.id || "");
+  const [monthlyAmount, setMonthlyAmount] = useState("");
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatColor, setNewCatColor] = useState(PALETTE[0]);
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!categoryId || !monthlyAmount) return;
+    onAdd({ categoryId, monthlyAmount: Number(monthlyAmount) });
+    setMonthlyAmount("");
+  };
+
+  const createCategory = () => {
+    if (!newCatName) return;
+    onAddCategory({ name: newCatName, color: newCatColor });
+    setNewCatName("");
+    setCreatingCategory(false);
+  };
+
+  return (
+    <form className="panel form-panel" onSubmit={submit}>
+      <div className="form-grid">
+        <Field label="Category">
+          {availableCategories.length > 0 ? (
+            <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+              {availableCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          ) : (
+            <p className="hint" style={{ margin: 0 }}>
+              {isAdmin ? "No unbudgeted categories left — add a new one below." : "No categories available yet — ask an admin to add one in the Admin Console."}
+            </p>
+          )}
+        </Field>
+        <Field label="Monthly amount"><input className="input" type="number" step="0.01" value={monthlyAmount} onChange={(e) => setMonthlyAmount(e.target.value)} placeholder="0.00" /></Field>
+      </div>
+      {availableCategories.length > 0 && (
+        <button className="btn btn-primary" type="submit"><Plus size={15} /> Add budget</button>
+      )}
+
+      {isAdmin && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px dashed var(--line)" }}>
+          {creatingCategory ? (
+            <div className="add-row-form" style={{ flexWrap: "wrap" }}>
+              <input className="input input-small" value={newCatName} onChange={(e) => setNewCatName(e.target.value)} placeholder="New category name" />
+              <ColorSwatchPicker value={newCatColor} onChange={setNewCatColor} />
+              <button type="button" className="btn btn-primary btn-small" onClick={createCategory}><Plus size={13} /> Create</button>
+              <button type="button" className="btn btn-ghost btn-small" onClick={() => setCreatingCategory(false)}><X size={13} /></button>
+            </div>
+          ) : (
+            <button type="button" className="btn btn-ghost btn-small" onClick={() => setCreatingCategory(true)}><Plus size={13} /> New category</button>
+          )}
+        </div>
+      )}
+    </form>
+  );
+}
+
 /* ---------------------------------- analytics page ---------------------------------- */
 
 function AnalyticsPage({ data }) {
@@ -1970,6 +2454,26 @@ function Empty({ text }) {
   return <p className="empty">{text}</p>;
 }
 
+// A row of curated color swatches plus a raw color input, used wherever an
+// admin picks a tag/category color.
+function ColorSwatchPicker({ value, onChange }) {
+  return (
+    <div className="swatch-row">
+      {PALETTE.map((c) => (
+        <button
+          type="button"
+          key={c}
+          className={"swatch" + (value === c ? " active" : "")}
+          style={{ background: c }}
+          onClick={() => onChange(c)}
+          title={c}
+        />
+      ))}
+      <input type="color" className="swatch-custom" value={value} onChange={(e) => onChange(e.target.value)} title="Custom color" />
+    </div>
+  );
+}
+
 /* ---------------------------------- settings page ---------------------------------- */
 
 function SettingsPage({ settings, updateSettings, themeMode, setThemeMode, canLoadDemoData, loadDemo, clearAll }) {
@@ -2062,6 +2566,176 @@ function SettingsPage({ settings, updateSettings, themeMode, setThemeMode, canLo
           <button className="btn btn-ghost btn-small" onClick={clearAll}><Eraser size={13} /> Clear all data</button>
         </div>
       </Panel>
+    </div>
+  );
+}
+
+/* ---------------------------------- admin console ---------------------------------- */
+
+function AdminPage({ catalog, addCategory, updateCategoryEntry, deleteCategoryEntry, addTag, updateTagEntry, deleteTagEntry, isOwner, currentUser }) {
+  const [section, setSection] = useState("users"); // 'users' | 'catalog'
+
+  return (
+    <div>
+      <PageHeader title="Admin Console" subtitle="Account access and the shared tag/category catalog" />
+      <div className="segmented" style={{ marginBottom: 18 }}>
+        <button className={"segment" + (section === "users" ? " active" : "")} onClick={() => setSection("users")}>Users</button>
+        <button className={"segment" + (section === "catalog" ? " active" : "")} onClick={() => setSection("catalog")}>Tags & Categories</button>
+      </div>
+
+      {section === "users" ? (
+        <AdminUsersSection isOwner={isOwner} currentUser={currentUser} />
+      ) : (
+        <AdminCatalogSection
+          catalog={catalog}
+          addCategory={addCategory}
+          updateCategoryEntry={updateCategoryEntry}
+          deleteCategoryEntry={deleteCategoryEntry}
+          addTag={addTag}
+          updateTagEntry={updateTagEntry}
+          deleteTagEntry={deleteTagEntry}
+        />
+      )}
+    </div>
+  );
+}
+
+function AdminUsersSection({ isOwner, currentUser }) {
+  const [profiles, setProfiles] = useState(null); // null = loading
+  const [adminUids, setAdminUids] = useState([]);
+  const [error, setError] = useState("");
+
+  const reload = () => {
+    Promise.all([listUserProfiles(), listAdminUids()])
+      .then(([p, a]) => { setProfiles(p); setAdminUids(a); })
+      .catch(() => setError("Couldn't load users."));
+  };
+
+  useEffect(reload, []);
+
+  const toggleAdmin = (profile) => {
+    const next = !adminUids.includes(profile.uid);
+    setAdminUids((prev) => (next ? [...prev, profile.uid] : prev.filter((id) => id !== profile.uid)));
+    setAdminAccess(profile.uid, next, profile.email).catch(() => { setError("Couldn't update admin access."); reload(); });
+  };
+
+  const fmtTimestamp = (ts) => {
+    if (!ts) return "—";
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return isNaN(d) ? "—" : fmtDateLong(d);
+  };
+
+  return (
+    <Panel title="Users">
+      {error && <p className="hint" style={{ color: "var(--rust)" }}>{error}</p>}
+      {profiles === null ? (
+        <p className="empty">Loading…</p>
+      ) : profiles.length === 0 ? (
+        <Empty text="No user accounts found yet." />
+      ) : (
+        <div className="ledger">
+          {profiles.map((p) => {
+            const isThisOwner = p.email === "howlhousemedia@gmail.com";
+            const isAdminUser = isThisOwner || adminUids.includes(p.uid);
+            return (
+              <div className="ledger-row wrap" key={p.uid}>
+                <span className="dot" style={{ background: isAdminUser ? "var(--brand)" : "var(--line)" }} />
+                <span className="col-name">
+                  {p.displayName || p.email}
+                  {isThisOwner && <span className="tag tag-credit">Owner</span>}
+                  {p.uid === currentUser?.uid && <span className="tag tag-debit">You</span>}
+                </span>
+                <span className="col-card" style={{ width: 200 }}>{p.email}</span>
+                <span className="col-date" style={{ width: 110 }}>joined {fmtTimestamp(p.createdAt)}</span>
+                <span className="col-date" style={{ width: 110 }}>active {fmtTimestamp(p.lastLoginAt)}</span>
+                <label className="paid-toggle" title={isOwner ? "Grant or revoke admin access" : "Only the account owner can change admin access"}>
+                  <input type="checkbox" checked={isAdminUser} disabled={!isOwner || isThisOwner} onChange={() => toggleAdmin(p)} />
+                  <span className={isAdminUser ? "tag tag-paid" : "tag tag-unpaid"}>{isAdminUser ? "Admin" : "No admin access"}</span>
+                </label>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {!isOwner && <p className="hint" style={{ marginTop: 12, marginBottom: 0 }}>Only the account owner can grant or revoke admin access.</p>}
+    </Panel>
+  );
+}
+
+function AdminCatalogSection({ catalog, addCategory, updateCategoryEntry, deleteCategoryEntry, addTag, updateTagEntry, deleteTagEntry }) {
+  return (
+    <>
+      <CatalogEditor title="Categories" items={catalog.categories} onAdd={addCategory} onUpdate={updateCategoryEntry} onDelete={deleteCategoryEntry} addLabel="Add category" />
+      <CatalogEditor title="Tags" items={catalog.tags} onAdd={addTag} onUpdate={updateTagEntry} onDelete={deleteTagEntry} addLabel="Add tag" />
+    </>
+  );
+}
+
+function CatalogEditor({ title, items, onAdd, onUpdate, onDelete, addLabel }) {
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState(PALETTE[0]);
+
+  const submitAdd = (e) => {
+    e.preventDefault();
+    if (!newName) return;
+    onAdd({ name: newName, color: newColor });
+    setNewName(""); setNewColor(PALETTE[0]); setAdding(false);
+  };
+
+  return (
+    <Panel title={title} right={
+      <button className="btn btn-ghost btn-small" onClick={() => setAdding((v) => !v)}>
+        {adding ? <X size={13} /> : <Plus size={13} />} {adding ? "Close" : addLabel}
+      </button>
+    }>
+      {adding && (
+        <form className="add-row-form" style={{ flexWrap: "wrap" }} onSubmit={submitAdd}>
+          <input className="input input-small" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name" autoFocus />
+          <ColorSwatchPicker value={newColor} onChange={setNewColor} />
+          <button className="btn btn-primary btn-small" type="submit"><Plus size={13} /> Add</button>
+        </form>
+      )}
+      {items.length === 0 ? (
+        <Empty text={`No ${title.toLowerCase()} yet.`} />
+      ) : (
+        <div className="ledger">
+          {items.map((item) => (
+            <CatalogItemRow key={item.id} item={item} onUpdate={onUpdate} onDelete={onDelete} />
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function CatalogItemRow({ item, onUpdate, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [nameDraft, setNameDraft] = useState(item.name);
+  const [colorDraft, setColorDraft] = useState(item.color);
+
+  const save = () => {
+    onUpdate(item.id, { name: nameDraft, color: colorDraft });
+    setEditing(false);
+  };
+
+  return (
+    <div className="ledger-row wrap">
+      <span className="dot" style={{ background: item.color }} />
+      {editing ? (
+        <div className="paid-summary" style={{ flex: 1 }}>
+          <input className="input input-small" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} />
+          <ColorSwatchPicker value={colorDraft} onChange={setColorDraft} />
+          <button type="button" className="icon-btn" onClick={save} title="Save"><Check size={14} /></button>
+          <button type="button" className="icon-btn" onClick={() => setEditing(false)} title="Cancel"><X size={14} /></button>
+        </div>
+      ) : (
+        <>
+          <span className="col-name"><Pill item={item} /></span>
+          <button type="button" className="icon-btn" onClick={() => { setNameDraft(item.name); setColorDraft(item.color); setEditing(true); }} title="Edit"><Pencil size={13} /></button>
+        </>
+      )}
+      <button className="icon-btn" onClick={() => onDelete(item.id)} title="Delete"><Trash2 size={14} /></button>
     </div>
   );
 }

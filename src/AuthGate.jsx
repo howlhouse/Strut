@@ -3,13 +3,15 @@ import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { LogOut } from "lucide-react";
 import { auth, googleProvider } from "./firebase.js";
 import { makeFirestoreStorage } from "./storage.js";
+import { upsertOwnProfile, getOwnAdminFlag } from "./adminData.js";
 import { useTheme } from "./useTheme.js";
 import App from "./App.jsx";
 import "./theme.css";
 
 // The "Load demo data" button is a testing convenience, not a real feature —
 // only show it to the app's own developer/owner account, not every new
-// sign-up.
+// sign-up. This same account is always treated as an admin (see
+// firestore.rules), regardless of the /admins collection.
 const OWNER_EMAIL = "howlhousemedia@gmail.com";
 
 // Gates the app behind Google Sign-In so Firestore can scope each user's
@@ -19,9 +21,21 @@ export default function AuthGate() {
   const [user, setUser] = useState(undefined); // undefined = still checking, null = signed out
   const [error, setError] = useState("");
   const [signingIn, setSigningIn] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const { mode: themeMode, setMode: setThemeMode, effective: theme } = useTheme();
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
+
+  // Keep the shared account-info record current, and resolve whether this
+  // account has admin access, whenever a user signs in.
+  useEffect(() => {
+    if (!user) { setIsAdmin(false); return; }
+    if (user.email === OWNER_EMAIL) setIsAdmin(true);
+    upsertOwnProfile(user).catch(() => {});
+    getOwnAdminFlag(user.uid).then((flag) => {
+      if (user.email !== OWNER_EMAIL) setIsAdmin(flag);
+    }).catch(() => {});
+  }, [user]);
 
   const handleSignIn = async () => {
     setError("");
@@ -68,6 +82,9 @@ export default function AuthGate() {
       <App
         storage={makeFirestoreStorage(user.uid)}
         canLoadDemoData={user.email === OWNER_EMAIL}
+        isAdmin={isAdmin}
+        isOwner={user.email === OWNER_EMAIL}
+        currentUser={user}
         themeMode={themeMode}
         setThemeMode={setThemeMode}
       />
