@@ -406,7 +406,7 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
         {tab === "forecast" && (
           <ForecastPage data={data} addIncome={addIncome} deleteIncome={deleteIncome} />
         )}
-        {tab === "analytics" && <AnalyticsPage data={data} />}
+        {tab === "analytics" && <AnalyticsPage data={data} catalog={catalog} />}
         {tab === "settings" && (
           <SettingsPage
             settings={data.settings || DEFAULT_DATA.settings}
