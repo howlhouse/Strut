@@ -252,6 +252,14 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
     }
     return d;
   });
+  // Only ever called on a manually-logged transaction (bill/layaway-sourced
+  // ones stay editable only through their own flow, so the linked
+  // bill/installment payment record can't drift out of sync with the ledger).
+  const updateTransaction = (id, patch) => update((d) => {
+    const tx = d.cardTransactions.find((t) => t.id === id) || (d.accountTransactions || []).find((t) => t.id === id);
+    if (tx) Object.assign(tx, patch);
+    return d;
+  });
 
   /* ---- bank account actions ---- */
   const addBankAccount = (account) => update((d) => { d.bankAccounts.push({ id: uid(), ...account }); return d; });
@@ -393,7 +401,7 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
           <CardsPage data={data} catalog={catalog} addCard={addCard} deleteCard={deleteCard} addTransaction={addTransaction} deleteTransaction={deleteTransaction} cardColor={cardColor} />
         )}
         {tab === "accounts" && (
-          <BankAccountsPage data={data} catalog={catalog} addBankAccount={addBankAccount} updateBankAccount={updateBankAccount} deleteBankAccount={deleteBankAccount} addTransaction={addTransaction} deleteTransaction={deleteTransaction} />
+          <BankAccountsPage data={data} catalog={catalog} addBankAccount={addBankAccount} updateBankAccount={updateBankAccount} deleteBankAccount={deleteBankAccount} addTransaction={addTransaction} updateTransaction={updateTransaction} deleteTransaction={deleteTransaction} />
         )}
         {tab === "forecast" && (
           <ForecastPage data={data} addIncome={addIncome} deleteIncome={deleteIncome} />
