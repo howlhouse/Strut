@@ -4,7 +4,7 @@ import { money, fmtDate, todayISO } from "../utils/format";
 import { accountBalance } from "../utils/funding";
 import { PageHeader, Panel, Field, Stat, Empty, Pill } from "../components/ui/Primitives";
 
-export default function BankAccountsPage({ data, catalog, addBankAccount, updateBankAccount, deleteBankAccount, addTransaction, deleteTransaction }) {
+export default function BankAccountsPage({ data, catalog, addBankAccount, updateBankAccount, deleteBankAccount, addTransaction, updateTransaction, deleteTransaction }) {
   const [adding, setAdding] = useState(false);
   const accounts = data.bankAccounts || [];
   const totalChecking = accounts.filter((a) => a.type !== "savings").reduce((s, a) => s + accountBalance(a, data), 0);
@@ -40,6 +40,7 @@ export default function BankAccountsPage({ data, catalog, addBankAccount, update
             updateBankAccount={updateBankAccount}
             deleteBankAccount={deleteBankAccount}
             addTransaction={addTransaction}
+            updateTransaction={updateTransaction}
             deleteTransaction={deleteTransaction}
           />
         ))
@@ -48,7 +49,7 @@ export default function BankAccountsPage({ data, catalog, addBankAccount, update
   );
 }
 
-function AccountLedgerPanel({ account, data, catalog, updateBankAccount, deleteBankAccount, addTransaction, deleteTransaction }) {
+function AccountLedgerPanel({ account, data, catalog, updateBankAccount, deleteBankAccount, addTransaction, updateTransaction, deleteTransaction }) {
   const [showForm, setShowForm] = useState(false);
   const [editingBalance, setEditingBalance] = useState(false);
   const [balanceDraft, setBalanceDraft] = useState(account.balance);
@@ -109,24 +110,76 @@ function AccountLedgerPanel({ account, data, catalog, updateBankAccount, deleteB
       ) : (
         <div className="ledger">
           {txs.map((t) => (
-            <div className="ledger-row" key={t.id}>
-              <span className="dot" style={{ background: t.type === "charge" ? "var(--rust)" : "var(--bottle)" }} />
-              <span className="col-name">
-                {t.description}
-                {t.categoryId && (catalog?.categories || []).find((c) => c.id === t.categoryId) && (
-                  <Pill item={(catalog.categories || []).find((c) => c.id === t.categoryId)} />
-                )}
-              </span>
-              <span className="col-date">{fmtDate(t.date)}</span>
-              <span className="col-amount" style={{ color: t.type === "charge" ? "var(--rust)" : "var(--bottle)" }}>
-                {t.type === "charge" ? "−" : "+"}{money(t.amount)}
-              </span>
-              <button className="icon-btn" onClick={() => deleteTransaction(t.id)} title="Delete"><Trash2 size={14} /></button>
-            </div>
+            <AccountTransactionRow key={t.id} t={t} catalog={catalog} updateTransaction={updateTransaction} deleteTransaction={deleteTransaction} />
           ))}
         </div>
       )}
     </Panel>
+  );
+}
+
+// A manually-logged transaction (e.g. a cash-gig deposit) can be corrected
+// after the fact — description, amount, date, type, category — right from
+// the ledger row. Bill-generated transactions stay read-only here since
+// editing them would drift out of sync with the bill's own payment record;
+// fix those from the Bills page instead.
+function AccountTransactionRow({ t, catalog, updateTransaction, deleteTransaction }) {
+  const [editing, setEditing] = useState(false);
+  const [description, setDescription] = useState(t.description);
+  const [amount, setAmount] = useState(t.amount);
+  const [type, setType] = useState(t.type);
+  const [date, setDate] = useState(t.date?.slice(0, 10) || t.date);
+  const [categoryId, setCategoryId] = useState(t.categoryId || "");
+  const categories = catalog?.categories || [];
+  const canEdit = t.source === "manual";
+
+  const save = () => {
+    if (!description || !amount) return;
+    updateTransaction(t.id, { description, amount: Number(amount) || 0, type, date, categoryId: categoryId || null });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="ledger-row wrap">
+        <span className="dot" style={{ background: type === "charge" ? "var(--rust)" : "var(--bottle)" }} />
+        <input className="input input-small" style={{ flex: 1, minWidth: 140 }} value={description} onChange={(e) => setDescription(e.target.value)} autoFocus />
+        <input className="input input-small col-amount-input" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        <select className="input input-small" value={type} onChange={(e) => setType(e.target.value)}>
+          <option value="charge">Charge (money out)</option>
+          <option value="payment">Deposit (money in)</option>
+        </select>
+        <input className="input input-small" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        {categories.length > 0 && (
+          <select className="input input-small" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <option value="">no category</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        )}
+        <button type="button" className="icon-btn" onClick={save} title="Save"><Check size={14} /></button>
+        <button type="button" className="icon-btn" onClick={() => setEditing(false)} title="Cancel"><X size={14} /></button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ledger-row">
+      <span className="dot" style={{ background: t.type === "charge" ? "var(--rust)" : "var(--bottle)" }} />
+      <span className="col-name">
+        {t.description}
+        {t.categoryId && (catalog?.categories || []).find((c) => c.id === t.categoryId) && (
+          <Pill item={(catalog.categories || []).find((c) => c.id === t.categoryId)} />
+        )}
+      </span>
+      <span className="col-date">{fmtDate(t.date)}</span>
+      <span className="col-amount" style={{ color: t.type === "charge" ? "var(--rust)" : "var(--bottle)" }}>
+        {t.type === "charge" ? "−" : "+"}{money(t.amount)}
+      </span>
+      {canEdit && (
+        <button className="icon-btn" onClick={() => setEditing(true)} title="Edit transaction"><Pencil size={14} /></button>
+      )}
+      <button className="icon-btn" onClick={() => deleteTransaction(t.id)} title="Delete"><Trash2 size={14} /></button>
+    </div>
   );
 }
 
@@ -148,7 +201,7 @@ function AccountTransactionForm({ catalog, onAdd }) {
   return (
     <form className="panel form-panel form-panel-tight" onSubmit={submit}>
       <div className="form-grid">
-        <Field label="Description"><input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Groceries, car payment…" /></Field>
+        <Field label="Description"><input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Groceries, car payment, cash gig…" /></Field>
         <Field label="Amount"><input className="input" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" /></Field>
         <Field label="Type">
           <select className="input" value={type} onChange={(e) => setType(e.target.value)}>
