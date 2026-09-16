@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, X, Check, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { Plus, X, Check, Pencil, Trash2, ExternalLink, ChevronDown, ChevronUp } from "lucide-react";
 import { money, todayISO, uid } from "../utils/format";
 import { cardOptionLabel } from "../utils/funding";
 import { PageHeader, Panel, Field, Empty } from "../components/ui/Primitives";
@@ -44,6 +44,10 @@ export default function LayawayPage({ data, addFestival, deleteFestival, updateF
 function FestivalTile({ fest, cards, toggleInstallmentPaid, deleteFestival, updateFestivalMeta, addInstallment, deleteInstallment, updateInstallment, cardColor }) {
   const [editing, setEditing] = useState(false);
   const [addingPayment, setAddingPayment] = useState(false);
+  // Collapsed by default — the progress bar already gives an at-a-glance
+  // status, so the full installment schedule (the noisiest part of the
+  // tile) only shows once someone asks for it.
+  const [collapsed, setCollapsed] = useState(true);
   const total = fest.installments.reduce((s, i) => s + Number(i.amount), 0);
   const paidTotal = fest.installments.filter((i) => i.paid).reduce((s, i) => s + Number(i.amount), 0);
   const pct = total ? Math.round((paidTotal / total) * 100) : 0;
@@ -57,6 +61,9 @@ function FestivalTile({ fest, cards, toggleInstallmentPaid, deleteFestival, upda
           {fest.itemName && <p className="tile-sub">{fest.itemName}</p>}
         </div>
         <div className="tile-head-actions">
+          <button className="icon-btn" onClick={() => setCollapsed((v) => !v)} title={collapsed ? "Show payments" : "Hide payments"}>
+            {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+          </button>
           <button className="icon-btn" onClick={() => setEditing((v) => !v)} title="Edit details">{editing ? <X size={14} /> : <Pencil size={14} />}</button>
           <button className="icon-btn" onClick={() => deleteFestival(fest.id)} title="Delete plan"><Trash2 size={14} /></button>
         </div>
@@ -82,18 +89,22 @@ function FestivalTile({ fest, cards, toggleInstallmentPaid, deleteFestival, upda
         <span className="progress-label">{money(paidTotal)} of {money(total)} paid</span>
       </div>
 
-      <div className="ledger">
-        {fest.installments.slice().sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)).map((inst) => (
-          <InstallmentRow key={inst.id} fest={fest} inst={inst} toggleInstallmentPaid={toggleInstallmentPaid} deleteInstallment={deleteInstallment} updateInstallment={updateInstallment} color={tileColor} />
-        ))}
-      </div>
+      {!collapsed && (
+        <>
+          <div className="ledger">
+            {fest.installments.slice().sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)).map((inst) => (
+              <InstallmentRow key={inst.id} fest={fest} inst={inst} toggleInstallmentPaid={toggleInstallmentPaid} deleteInstallment={deleteInstallment} updateInstallment={updateInstallment} color={tileColor} />
+            ))}
+          </div>
 
-      {addingPayment ? (
-        <AddInstallmentForm onAdd={(entry) => { addInstallment(fest.id, entry); setAddingPayment(false); }} onCancel={() => setAddingPayment(false)} />
-      ) : (
-        <button className="btn btn-ghost btn-small" style={{ marginTop: 10 }} onClick={() => setAddingPayment(true)}>
-          <Plus size={14} /> Add payment
-        </button>
+          {addingPayment ? (
+            <AddInstallmentForm onAdd={(entry) => { addInstallment(fest.id, entry); setAddingPayment(false); }} onCancel={() => setAddingPayment(false)} />
+          ) : (
+            <button className="btn btn-ghost btn-small" style={{ marginTop: 10 }} onClick={() => setAddingPayment(true)}>
+              <Plus size={14} /> Add payment
+            </button>
+          )}
+        </>
       )}
     </section>
   );
