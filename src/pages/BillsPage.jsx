@@ -4,7 +4,7 @@ import { money, fmtDate, todayISO, monthKey, monthLabel } from "../utils/format"
 import { billDueInfo, billHistoryEntries, billEstimatedAmount, billScheduleEntries } from "../utils/bills";
 import { fundingSource } from "../utils/funding";
 import { isBillRelevantForMonth, monthLongLabel } from "../utils/months";
-import { PageHeader, Panel, Field, Empty, Pill, FundingSourceSelect, MonthSwitcher } from "../components/ui/Primitives";
+import { PageHeader, Panel, Field, Stat, Empty, Pill, FundingSourceSelect, MonthSwitcher } from "../components/ui/Primitives";
 
 export default function BillsPage({ data, catalog, addBill, updateBill, deleteBill, toggleBillPaid, cardColor, selectedMonth, setSelectedMonth }) {
   const [adding, setAdding] = useState(false);
@@ -18,6 +18,22 @@ export default function BillsPage({ data, catalog, addBill, updateBill, deleteBi
     [data, selectedMonth]
   );
 
+  // Paid/unpaid split for whichever month is currently displayed — paid bills
+  // count their actual recorded amount, unpaid ones their current estimate,
+  // so the total tracks what BillRow shows for each bill below.
+  const monthStats = useMemo(() => {
+    let total = 0;
+    let paid = 0;
+    sorted.forEach((bill) => {
+      const { key } = billDueInfo(bill, selectedMonth);
+      const payment = data.billPayments[key]?.[bill.id];
+      const amount = payment?.paid ? Number(payment.amount) : billEstimatedAmount(bill, key);
+      total += amount;
+      if (payment?.paid) paid += amount;
+    });
+    return { total, paid, unpaid: total - paid };
+  }, [sorted, data, selectedMonth]);
+
   return (
     <div>
       <PageHeader title="Bills" subtitle="Recurring and one-time bills" action={
@@ -27,6 +43,14 @@ export default function BillsPage({ data, catalog, addBill, updateBill, deleteBi
       } />
 
       {adding && <AddBillForm data={data} catalog={catalog} onAdd={(b) => { addBill(b); setAdding(false); }} />}
+
+      {sorted.length > 0 && (
+        <div className="stat-row">
+          <Stat label={`Total bills — ${monthLongLabel(selectedMonth)}`} value={money(monthStats.total)} tone="ink" />
+          <Stat label="Paid" value={money(monthStats.paid)} tone="bottle" />
+          <Stat label="Unpaid" value={money(monthStats.unpaid)} tone={monthStats.unpaid > 0 ? "rust" : "bottle"} />
+        </div>
+      )}
 
       <MonthSwitcher month={selectedMonth} setMonth={setSelectedMonth} />
 
