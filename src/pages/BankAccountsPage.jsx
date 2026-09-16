@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Plus, X, Check, Pencil, Trash2 } from "lucide-react";
 import { money, fmtDate, todayISO } from "../utils/format";
 import { accountBalance } from "../utils/funding";
-import { PageHeader, Panel, Field, Stat, Empty, Pill } from "../components/ui/Primitives";
+import { PageHeader, Panel, Field, Stat, Empty, Pill, TagChipPicker } from "../components/ui/Primitives";
 
 export default function BankAccountsPage({ data, catalog, addBankAccount, updateBankAccount, deleteBankAccount, addTransaction, updateTransaction, deleteTransaction }) {
   const [adding, setAdding] = useState(false);
@@ -130,12 +130,14 @@ function AccountTransactionRow({ t, catalog, updateTransaction, deleteTransactio
   const [type, setType] = useState(t.type);
   const [date, setDate] = useState(t.date?.slice(0, 10) || t.date);
   const [categoryId, setCategoryId] = useState(t.categoryId || "");
+  const [tagIds, setTagIds] = useState(t.tagIds || []);
   const categories = catalog?.categories || [];
+  const tags = catalog?.tags || [];
   const canEdit = t.source === "manual";
 
   const save = () => {
     if (!description || !amount) return;
-    updateTransaction(t.id, { description, amount: Number(amount) || 0, type, date, categoryId: categoryId || null });
+    updateTransaction(t.id, { description, amount: Number(amount) || 0, type, date, categoryId: categoryId || null, tagIds });
     setEditing(false);
   };
 
@@ -156,6 +158,7 @@ function AccountTransactionRow({ t, catalog, updateTransaction, deleteTransactio
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         )}
+        {tags.length > 0 && <TagChipPicker tags={tags} value={tagIds} onChange={setTagIds} />}
         <button type="button" className="icon-btn" onClick={save} title="Save"><Check size={14} /></button>
         <button type="button" className="icon-btn" onClick={() => setEditing(false)} title="Cancel"><X size={14} /></button>
       </div>
@@ -170,6 +173,9 @@ function AccountTransactionRow({ t, catalog, updateTransaction, deleteTransactio
         {t.categoryId && (catalog?.categories || []).find((c) => c.id === t.categoryId) && (
           <Pill item={(catalog.categories || []).find((c) => c.id === t.categoryId)} />
         )}
+        {(t.tagIds || []).map((id) => (catalog?.tags || []).find((tag) => tag.id === id)).filter(Boolean).map((tag) => (
+          <Pill key={tag.id} item={tag} />
+        ))}
       </span>
       <span className="col-date">{fmtDate(t.date)}</span>
       <span className="col-amount" style={{ color: t.type === "charge" ? "var(--rust)" : "var(--bottle)" }}>
@@ -189,12 +195,14 @@ function AccountTransactionForm({ catalog, onAdd }) {
   const [type, setType] = useState("charge");
   const [date, setDate] = useState(todayISO());
   const [categoryId, setCategoryId] = useState("");
+  const [tagIds, setTagIds] = useState([]);
   const categories = catalog?.categories || [];
+  const tags = catalog?.tags || [];
 
   const submit = (e) => {
     e.preventDefault();
     if (!description || !amount) return;
-    onAdd({ description, amount: Number(amount), type, date, categoryId: categoryId || null });
+    onAdd({ description, amount: Number(amount), type, date, categoryId: categoryId || null, tagIds });
     setDescription(""); setAmount("");
   };
 
@@ -211,7 +219,7 @@ function AccountTransactionForm({ catalog, onAdd }) {
         </Field>
         <Field label="Date"><input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
         {categories.length > 0 && (
-          <Field label="Budget category (optional)">
+          <Field label="Category (optional)">
             <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
               <option value="">none</option>
               {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -219,6 +227,11 @@ function AccountTransactionForm({ catalog, onAdd }) {
           </Field>
         )}
       </div>
+      {tags.length > 0 && (
+        <Field label="Tags (optional, for budgets)">
+          <TagChipPicker tags={tags} value={tagIds} onChange={setTagIds} />
+        </Field>
+      )}
       <button className="btn btn-primary" type="submit"><Plus size={15} /> Add transaction</button>
     </form>
   );

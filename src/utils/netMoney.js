@@ -41,13 +41,15 @@ export function netMoneyNow(data, horizonDays) {
   return totalBankBalances(data) - totalCardBalancesOwed(data) - upcomingTotal;
 }
 
-// Money already charged against a budget's category this real calendar
-// month (not the page's navigable month — a budget is always "this month").
+// Money already charged against a budget's tag this real calendar month (not
+// the page's navigable month — a budget is always "this month"), across both
+// card and bank-account transactions.
 export function budgetSpentThisMonth(budget, data) {
   const thisMonth = monthKey(new Date());
-  return data.cardTransactions
-    .filter((t) => t.categoryId === budget.categoryId && t.type === "charge" && monthKey(new Date(t.date)) === thisMonth)
-    .reduce((s, t) => s + Number(t.amount), 0);
+  const matches = (t) => (t.tagIds || []).includes(budget.tagId) && t.type === "charge" && monthKey(new Date(t.date)) === thisMonth;
+  const cardSpent = data.cardTransactions.filter(matches).reduce((s, t) => s + Number(t.amount), 0);
+  const accountSpent = (data.accountTransactions || []).filter(matches).reduce((s, t) => s + Number(t.amount), 0);
+  return cardSpent + accountSpent;
 }
 
 // Net money after setting aside whatever's left, unspent, in every budget

@@ -141,7 +141,7 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
       const amt = amount != null && amount !== "" ? Number(amount) : billEstimatedAmount(bill, key);
       const txId = uid();
       if (cardId) {
-        const tx = { id: txId, date: paidDate, amount: amt, type: "charge", description: bill.name, source: "bill", ref: bill.id, categoryId: bill.categoryId || null };
+        const tx = { id: txId, date: paidDate, amount: amt, type: "charge", description: bill.name, source: "bill", ref: bill.id, categoryId: bill.categoryId || null, tagIds: bill.tagIds || [] };
         if (isBankAccountId(d, cardId)) d.accountTransactions.push({ ...tx, accountId: cardId });
         else d.cardTransactions.push({ ...tx, cardId });
       }
@@ -380,7 +380,7 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
             addBudget={addBudget}
             updateBudget={updateBudget}
             deleteBudget={deleteBudget}
-            addCategory={addCategory}
+            addTag={addTag}
             isAdmin={isAdmin}
           />
         )}
