@@ -4,7 +4,7 @@ import { money, fmtDate, todayISO, monthKey, monthLabel } from "../utils/format"
 import { billDueInfo, billHistoryEntries, billEstimatedAmount, billScheduleEntries } from "../utils/bills";
 import { fundingSource } from "../utils/funding";
 import { isBillRelevantForMonth, monthLongLabel } from "../utils/months";
-import { PageHeader, Panel, Field, Stat, Empty, Pill, FundingSourceSelect, MonthSwitcher } from "../components/ui/Primitives";
+import { PageHeader, Panel, Field, Stat, Empty, Pill, FundingSourceSelect, MonthSwitcher, TagChipPicker } from "../components/ui/Primitives";
 
 export default function BillsPage({ data, catalog, addBill, updateBill, deleteBill, toggleBillPaid, cardColor, selectedMonth, setSelectedMonth }) {
   const [adding, setAdding] = useState(false);
@@ -342,8 +342,6 @@ function CategoryTagEditor({ catalog, categoryId, tagIds, onSave }) {
   const categories = catalog?.categories || [];
   const tags = catalog?.tags || [];
 
-  const toggleTag = (id) => setSelectedTagIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-
   return (
     <div className="edit-form" style={{ width: "100%" }}>
       <Field label="Category">
@@ -354,19 +352,7 @@ function CategoryTagEditor({ catalog, categoryId, tagIds, onSave }) {
       </Field>
       {tags.length > 0 && (
         <Field label="Tags">
-          <div className="chip-row">
-            {tags.map((t) => (
-              <button
-                type="button"
-                key={t.id}
-                className={"chip" + (selectedTagIds.includes(t.id) ? " active" : "")}
-                style={selectedTagIds.includes(t.id) ? { background: t.color, borderColor: t.color, color: "#fff" } : {}}
-                onClick={() => toggleTag(t.id)}
-              >
-                {t.name}
-              </button>
-            ))}
-          </div>
+          <TagChipPicker tags={tags} value={selectedTagIds} onChange={setSelectedTagIds} />
         </Field>
       )}
       {categories.length === 0 && tags.length === 0 && (
@@ -390,8 +376,6 @@ function AddBillForm({ data, catalog, onAdd }) {
   const [tagIds, setTagIds] = useState([]);
   const categories = catalog?.categories || [];
   const tags = catalog?.tags || [];
-
-  const toggleTag = (id) => setTagIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const submit = (e) => {
     e.preventDefault();
@@ -431,19 +415,7 @@ function AddBillForm({ data, catalog, onAdd }) {
       </div>
       {tags.length > 0 && (
         <Field label="Tags">
-          <div className="chip-row">
-            {tags.map((t) => (
-              <button
-                type="button"
-                key={t.id}
-                className={"chip" + (tagIds.includes(t.id) ? " active" : "")}
-                style={tagIds.includes(t.id) ? { background: t.color, borderColor: t.color, color: "#fff" } : {}}
-                onClick={() => toggleTag(t.id)}
-              >
-                {t.name}
-              </button>
-            ))}
-          </div>
+          <TagChipPicker tags={tags} value={tagIds} onChange={setTagIds} />
         </Field>
       )}
       <button className="btn btn-primary" type="submit"><Plus size={15} /> Add bill</button>

@@ -6,7 +6,7 @@ import { fundingSource } from "../utils/funding";
 import { isSameMonth, monthLongLabel, isBillRelevantForMonth } from "../utils/months";
 import { totalCardBalancesOwed, netMoneyNow, computeUpcoming } from "../utils/netMoney";
 import { isEmptyData } from "../utils/demoData";
-import { PageHeader, Panel, Field, Stat, Empty, Modal, MonthSwitcher, FundingSourceSelect } from "../components/ui/Primitives";
+import { PageHeader, Panel, Field, Stat, Empty, Modal, MonthSwitcher, FundingSourceSelect, TagChipPicker } from "../components/ui/Primitives";
 import { BillRow } from "./BillsPage";
 
 export default function Dashboard({ data, catalog, cardName, cardColor, toggleBillPaid, toggleInstallmentPaid, updateBill, deleteBill, loadDemo, canLoadDemoData, addTransaction, selectedMonth, setSelectedMonth }) {
@@ -144,14 +144,16 @@ function GlobalTransactionForm({ data, catalog, addTransaction, onDone }) {
   const [type, setType] = useState("charge");
   const [date, setDate] = useState(todayISO());
   const [categoryId, setCategoryId] = useState("");
+  const [tagIds, setTagIds] = useState([]);
   const source = fundingSource(data, cardId);
   const isDebit = source && (source.type || "credit") === "debit";
   const categories = catalog?.categories || [];
+  const tags = catalog?.tags || [];
 
   const submit = (e) => {
     e.preventDefault();
     if (!cardId || !description || !amount) return;
-    addTransaction(cardId, { description, amount: Number(amount), type, date, categoryId: categoryId || null });
+    addTransaction(cardId, { description, amount: Number(amount), type, date, categoryId: categoryId || null, tagIds });
     onDone();
   };
 
@@ -170,7 +172,7 @@ function GlobalTransactionForm({ data, catalog, addTransaction, onDone }) {
         </Field>
         <Field label="Date"><input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
         {categories.length > 0 && (
-          <Field label="Budget category (optional)">
+          <Field label="Category (optional)">
             <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
               <option value="">none</option>
               {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -179,6 +181,11 @@ function GlobalTransactionForm({ data, catalog, addTransaction, onDone }) {
         )}
       </div>
       <Field label="Description"><input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Groceries, card payment, paycheck…" /></Field>
+      {tags.length > 0 && (
+        <Field label="Tags (optional, for budgets)">
+          <TagChipPicker tags={tags} value={tagIds} onChange={setTagIds} />
+        </Field>
+      )}
       <button className="btn btn-primary" type="submit"><Plus size={15} /> Add transaction</button>
     </form>
   );
