@@ -112,6 +112,27 @@ export function FundingSourceSelect({ data, value, onChange, allowNone, classNam
   );
 }
 
+// Controlled multi-select chip row for picking tags from the shared catalog —
+// no internal state or save button, so it drops into any form's own submit flow.
+export function TagChipPicker({ tags, value, onChange }) {
+  const toggle = (id) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <div className="chip-row">
+      {tags.map((t) => (
+        <button
+          type="button"
+          key={t.id}
+          className={"chip" + (value.includes(t.id) ? " active" : "")}
+          style={value.includes(t.id) ? { background: t.color, borderColor: t.color, color: "#fff" } : {}}
+          onClick={() => toggle(t.id)}
+        >
+          {t.name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function MonthSwitcher({ month, setMonth }) {
   const isCurrent = isSameMonth(month, new Date());
   return (
