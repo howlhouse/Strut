@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   X, LayoutDashboard, Receipt, Ticket, Wallet, Landmark, TrendingUp,
   Settings as SettingsIcon, PanelLeftClose, PanelLeftOpen, Menu,
   BarChart3, PiggyBank, ShieldCheck,
+  PartyPopper, CalendarDays, Megaphone, ClipboardCheck, Users,
 } from "lucide-react";
 import "./theme.css";
 import strutMark from "./assets/strut-mark.svg";
@@ -27,11 +28,19 @@ import ForecastPage from "./pages/ForecastPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import SettingsPage from "./pages/SettingsPage";
 import AdminPage from "./pages/AdminPage";
+import CommunityModule from "./community/CommunityModule";
 
 export default function App({ storage, canLoadDemoData, isAdmin, isOwner, currentUser, themeMode, setThemeMode }) {
   const [data, setData] = useState(DEFAULT_DATA);
   const [loaded, setLoaded] = useState(false);
-  const [tab, setTab] = useState("dashboard");
+  // Strut has two modules sharing this shell: personal Finance and the
+  // Community events calendar. There's no separate module state — a tab id
+  // belongs to exactly one module (see COMMUNITY_TAB_IDS), so the module is
+  // derived from whichever tab is showing.
+  const [tab, setTab] = useState(() => {
+    try { return localStorage.getItem("strut-module") === "community" ? "events" : "dashboard"; } catch { return "dashboard"; }
+  });
+  const lastTabByModule = useRef({ finance: "dashboard", community: "events" });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem("strut-sidebar-collapsed") === "1"; } catch { return false; }
   });
@@ -302,9 +311,30 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
     ...(isAdmin ? [{ id: "admin", label: "Admin Console", icon: ShieldCheck }] : []),
   ];
 
+  const communityNav = [
+    { id: "events", label: "Events", icon: PartyPopper },
+    { id: "calendar", label: "Calendar", icon: CalendarDays },
+    { id: "my-events", label: "My Listings", icon: Megaphone },
+    ...(isAdmin ? [{ id: "manage", label: "Manage Events", icon: ClipboardCheck }] : []),
+  ];
+  const COMMUNITY_TAB_IDS = ["events", "calendar", "my-events", "manage"];
+  const activeModule = COMMUNITY_TAB_IDS.includes(tab) ? "community" : "finance";
+  const modules = [
+    { id: "finance", label: "Finance", icon: Wallet },
+    { id: "community", label: "Community", icon: Users },
+  ];
+
   const goTo = (id) => {
     setTab(id);
+    lastTabByModule.current[activeModule] = id;
     setMobileMenuOpen(false);
+  };
+
+  // Switching modules returns to wherever the user last was in the other one.
+  const switchModule = (id) => {
+    if (id === activeModule) return;
+    try { localStorage.setItem("strut-module", id); } catch { /* ignore */ }
+    setTab(lastTabByModule.current[id]);
   };
 
   return (
@@ -326,8 +356,22 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
             <X size={18} />
           </button>
         </div>
+        <div className="module-switch" role="group" aria-label="Module">
+          {modules.map((m) => (
+            <button
+              key={m.id}
+              className={"module-btn" + (activeModule === m.id ? " active" : "")}
+              onClick={() => switchModule(m.id)}
+              title={m.label}
+              aria-pressed={activeModule === m.id}
+            >
+              <m.icon size={15} strokeWidth={1.75} />
+              <span className="nav-label">{m.label}</span>
+            </button>
+          ))}
+        </div>
         <nav>
-          {nav.map((n) => (
+          {(activeModule === "community" ? communityNav : nav).map((n) => (
             <button key={n.id} className={"nav-item" + (tab === n.id ? " active" : "")} onClick={() => goTo(n.id)} title={n.label}>
               <n.icon size={16} strokeWidth={1.75} />
               <span className="nav-label">{n.label}</span>
@@ -417,6 +461,9 @@ export default function App({ storage, canLoadDemoData, isAdmin, isOwner, curren
             loadDemo={loadDemo}
             clearAll={clearAll}
           />
+        )}
+        {activeModule === "community" && (
+          <CommunityModule tab={tab} currentUser={currentUser} isAdmin={isAdmin} />
         )}
         {tab === "admin" && isAdmin && (
           <AdminPage

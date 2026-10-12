@@ -35,6 +35,59 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == uid;
     }
 
+    // ---- Community events calendar -------------------------------------
+    // Promoters (any signed-in user) submit listings; an admin reviews and
+    // publishes them. Fields that carry the business side of a listing —
+    // status, fee, featured, owner — are admin-controlled: a non-admin can
+    // create only a pending/unpaid/unfeatured listing, and can never change
+    // those fields afterwards (other than resubmitting a declined listing,
+    // which moves it back to pending).
+
+    // Links must be plain http(s) (or empty), so a promoter can't plant a
+    // javascript: URL that other members would click.
+    function okUrl(d, f) {
+      return !(f in d) || d[f] == '' ||
+        (d[f] is string && d[f].size() <= 2048 && d[f].matches('^https?://.*'));
+    }
+    function validEvent() {
+      let d = request.resource.data;
+      return d.title is string && d.title.size() > 0 && d.title.size() <= 120
+        && d.date is string && d.date.size() == 10
+        && (!('description' in d) || (d.description is string && d.description.size() <= 5000))
+        && okUrl(d, 'imageUrl') && okUrl(d, 'ticketUrl') && okUrl(d, 'websiteUrl');
+    }
+    function ownerEditOk() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return before.ownerUid == request.auth.uid
+        && after.ownerUid == before.ownerUid
+        && after.get('featured', false) == before.get('featured', false)
+        && after.get('feePaid', false) == before.get('feePaid', false)
+        && after.get('feeAmount', 0) == before.get('feeAmount', 0)
+        && (after.status == before.status || (before.status == 'declined' && after.status == 'pending'));
+    }
+
+    match /communityEvents/{eventId} {
+      // Live listings are visible to every signed-in user; drafts and
+      // declined ones only to their owner and admins.
+      allow read: if request.auth != null && (
+        resource.data.status == 'published' ||
+        resource.data.ownerUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if request.auth != null && (
+        isAdmin() || (
+          request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.status == 'pending'
+          && request.resource.data.get('featured', false) == false
+          && request.resource.data.get('feePaid', false) == false
+          && validEvent()
+        )
+      );
+      allow update: if request.auth != null && (isAdmin() || (ownerEditOk() && validEvent()));
+      allow delete: if request.auth != null && (isAdmin() || resource.data.ownerUid == request.auth.uid);
+    }
+
     // Shared tag/category catalog used by every account. Any signed-in user
     // can read it (to tag their own bills); only an admin can change it.
     match /catalog/{docId} {

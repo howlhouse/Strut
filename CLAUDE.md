@@ -3,7 +3,9 @@
 A personal finance tracker: bills, credit/debit card ledgers, bank accounts with
 their own transaction ledger, layaway/installment plans, cash-flow forecasting,
 budgets by category, spending analytics, and an admin console for a shared
-tag/category catalog and user access.
+tag/category catalog and user access. A second **Community** module (switched
+from the top of the sidebar) is a shared events calendar where promoters post
+events — image tiles, address, ticket link — for the whole community.
 
 ## Stack
 
@@ -60,6 +62,14 @@ src/
     AnalyticsPage.jsx
     SettingsPage.jsx
     AdminPage.jsx        Users tab (adminData.js) + Tags & Categories tab (catalog.js)
+
+  community/            the Community module (events calendar) — self-contained
+    CommunityModule.jsx  owns the live Firestore subscriptions, renders the active page
+    events.js            Firestore layer for the communityEvents collection
+    eventUtils.js        pure helpers: dates, categories, safeUrl(), form validation
+    EventTile/EventDetail/EventForm.jsx   shared tile, detail modal, add/edit form
+    pages/               EventsPage (tile grid), CalendarPage, MyListingsPage
+                         (promoter), ManagePage (admin: review, fees, featured)
 ```
 
 **Finding things**: a page's own subcomponents (rows, add-forms) live at the
@@ -90,6 +100,27 @@ document per user (`users/{uid}/strut/data`, see [src/storage.js](src/storage.js
 A bill or transaction can be funded by *either* a card or a bank account — see
 `fundingSource`/`isBankAccountId` in [src/utils/funding.js](src/utils/funding.js),
 which resolve a single id across both collections.
+
+The **Community** module does not live in that blob. Events are individual docs
+in a top-level `communityEvents/{id}` collection (see
+[src/community/events.js](src/community/events.js)), shared across users:
+
+- Any signed-in user can submit a listing; it starts `status: "pending"`,
+  `feePaid: false`, `featured: false` — the rules in `firestore.rules` force
+  that for non-admins. An admin publishes it (`status: "published"`), records
+  the listing fee (`feeAmount`/`feePaid` — tracked manually, no payment
+  processor), and may feature it.
+- Visibility: `published` events are readable by every signed-in user;
+  pending/declined only by the owner (`ownerUid`) and admins. Queries must
+  match the rules (published feed, own listings, or all-for-admin).
+- Owner email is deliberately **not** stored on the event; admins resolve
+  `ownerUid` through `userProfiles`.
+- All link fields (`imageUrl`, `ticketUrl`, `websiteUrl`) must be http(s) —
+  enforced in the rules and by `safeUrl()`; use `safeUrl()` for any new href/src.
+- Which tabs belong to which module is decided by tab id (`COMMUNITY_TAB_IDS`
+  in `App.jsx`); the active module is derived from the current tab.
+- `firestore.rules` is **not** deployed by CI (Pages only builds the site) —
+  rule changes must be published in the Firebase console or via the CLI.
 
 The shared tag/category **catalog** (`{ categories: [], tags: [] }`) is a
 separate Firestore doc (`catalog/shared`, see [src/catalog.js](src/catalog.js)),
