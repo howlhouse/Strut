@@ -3,10 +3,10 @@ import { PALETTE } from "../../utils/constants";
 import { cardOptionLabel, accountOptionLabel } from "../../utils/funding";
 import { addMonths, isSameMonth, monthLongLabel, startOfMonth } from "../../utils/months";
 
-export function Modal({ title, onClose, children }) {
+export function Modal({ title, onClose, children, wide }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+      <div className={"modal-panel" + (wide ? " modal-wide" : "")} onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           <h2 className="panel-title">{title}</h2>
           <button className="icon-btn" onClick={onClose} title="Close"><X size={16} /></button>
