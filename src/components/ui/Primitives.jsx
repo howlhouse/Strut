@@ -1,6 +1,5 @@
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import { PALETTE } from "../../utils/constants";
-import { cardOptionLabel, accountOptionLabel } from "../../utils/funding";
 import { addMonths, isSameMonth, monthLongLabel, startOfMonth } from "../../utils/months";
 
 export function Modal({ title, onClose, children, wide }) {
@@ -84,51 +83,6 @@ export function ColorSwatchPicker({ value, onChange }) {
         />
       ))}
       <input type="color" className="swatch-custom" value={value} onChange={(e) => onChange(e.target.value)} title="Custom color" />
-    </div>
-  );
-}
-
-// Shared funding-source picker for bills, transactions, and layaway
-// payments — everywhere someone chooses which card or bank account a
-// payment comes from. Grouped so a checking account used for something
-// like a car payment is just as pickable as a credit card.
-export function FundingSourceSelect({ data, value, onChange, allowNone, className }) {
-  const cards = data.cards || [];
-  const accounts = data.bankAccounts || [];
-  return (
-    <select className={className || "input"} value={value} onChange={(e) => onChange(e.target.value)}>
-      {allowNone && <option value="">no card</option>}
-      {cards.length > 0 && (
-        <optgroup label="Cards">
-          {cards.map((c) => <option key={c.id} value={c.id}>{cardOptionLabel(c)}</option>)}
-        </optgroup>
-      )}
-      {accounts.length > 0 && (
-        <optgroup label="Bank accounts">
-          {accounts.map((a) => <option key={a.id} value={a.id}>{accountOptionLabel(a)}</option>)}
-        </optgroup>
-      )}
-    </select>
-  );
-}
-
-// Controlled multi-select chip row for picking tags from the shared catalog —
-// no internal state or save button, so it drops into any form's own submit flow.
-export function TagChipPicker({ tags, value, onChange }) {
-  const toggle = (id) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
-  return (
-    <div className="chip-row">
-      {tags.map((t) => (
-        <button
-          type="button"
-          key={t.id}
-          className={"chip" + (value.includes(t.id) ? " active" : "")}
-          style={value.includes(t.id) ? { background: t.color, borderColor: t.color, color: "#fff" } : {}}
-          onClick={() => toggle(t.id)}
-        >
-          {t.name}
-        </button>
-      ))}
     </div>
   );
 }

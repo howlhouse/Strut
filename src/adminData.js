@@ -1,7 +1,5 @@
 // Firestore-backed account-level data used by the Admin Console: user
-// profiles and admin-access flags. Deliberately separate from storage.js
-// (per-user financial data) — none of this touches a user's bills, cards or
-// transactions (see firestore.rules).
+// profiles and admin-access flags (see firestore.rules).
 import { collection, doc, getDoc, getDocs, deleteDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "./firebase.js";
 

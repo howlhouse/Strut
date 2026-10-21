@@ -12,8 +12,7 @@ import MyListingsPage from "./pages/MyListingsPage";
 import ManagePage from "./pages/ManagePage";
 
 // Owns the Community module's live data and renders whichever of its pages
-// the sidebar has selected. Unlike the finance side, nothing here goes
-// through App's update(): events are separate Firestore docs shared between
+// the sidebar has selected. Events are separate Firestore docs shared between
 // users, so each page gets small action props that write straight to them.
 // (null = still loading, [] = loaded and empty.)
 export default function CommunityModule({ tab, currentUser, isAdmin }) {

@@ -1,18 +1,17 @@
 # Strut
 
-A personal finance tracker: bills, credit/debit card ledgers, bank accounts with
-their own transaction ledger, layaway/installment plans, cash-flow forecasting,
-budgets by category, spending analytics, and an admin console for a shared
-tag/category catalog and user access. A second **Community** module (switched
-from the top of the sidebar) is a shared events calendar where promoters post
-events — image tiles, address, ticket link — for the whole community.
+A community events platform: a shared events calendar where promoters post
+events — image tiles, address, ticket link — and admins review, publish and
+feature them. Includes an admin console for user access and a shared
+tag/category catalog. (The earlier personal-finance version of the app lives
+at the `finance-app-final` git tag.)
 
 ## Stack
 
 - React 19 + Vite, no router (single-page tab switcher in [src/App.jsx](src/App.jsx))
 - Firebase Auth (Google sign-in only) + Firestore for persistence
-- `recharts` for charts, `lucide-react` for icons
-- Deployed via GitHub Actions to Firebase Hosting (see `.github/workflows`)
+- `lucide-react` for icons
+- Deployed via GitHub Actions to GitHub Pages (see `.github/workflows`)
 
 Run `npm run dev` for the dev server, `npm run build` to build.
 
@@ -23,47 +22,18 @@ src/
   main.jsx           entry point, mounts AuthGate
   AuthGate.jsx        Google sign-in gate; resolves admin status; renders App
   firebase.js         Firebase app/auth/db init
-  storage.js          Firestore-backed get/set, scoped to the signed-in uid
   catalog.js          Firestore-backed shared tag/category catalog (one doc, admin-writable)
   adminData.js        Firestore-backed user profiles + admin-access flags
   useTheme.js         light/dark/system theme hook
   theme.css           all styling (CSS variables + component classes)
   assets/             logo mark + wordmark SVGs
 
-  App.jsx             top-level state, all data-mutating actions, nav/routing shell
-                      (no page-specific UI — see pages/)
+  App.jsx             nav/routing shell + catalog state/actions for the Admin Console
+  utils/              format.js, months.js, constants.js (PALETTE)
+  components/ui/Primitives.jsx   shared Modal, PageHeader, Panel, Field, Empty, Pill, ...
+  pages/              SettingsPage (theme), AdminPage (Users + Tags & Categories)
 
-  utils/
-    format.js          money/date formatting, uid generation, pct helpers
-    months.js          month navigation helpers + isBillRelevantForMonth
-    constants.js        DEFAULT_DATA, CARD_COLORS, PALETTE (tag/category swatches)
-    funding.js         unifies cards + bank accounts as payment sources
-                       (fundingSource, isBankAccountId, accountBalance, signedAmount)
-    bills.js           billDueInfo, billHistoryEntries, scheduled-amount helpers
-    analytics.js        monthlyBillTotals, cardMonthlySpend, seriesStats
-    forecast.js         computeForecast (per-card) and computeCashForecast (per-account)
-    netMoney.js         totalBankBalances/totalCardBalancesOwed/netMoneyNow, budgets math
-    demoData.js         buildDemoData() for the "Load demo data" button
-
-  components/ui/
-    Primitives.jsx      shared pieces: Modal, PageHeader, Panel, Field, Stat, Empty,
-                       Pill, ColorSwatchPicker, FundingSourceSelect, MonthSwitcher
-
-  pages/                one file per sidebar tab; each default-exports the page
-                      and keeps its row/form subcomponents local to that file
-    Dashboard.jsx        also exports nothing else; imports BillRow from BillsPage
-                       for the "browsing a past/future month" view
-    BillsPage.jsx        exports BillRow (named) since Dashboard reuses it
-    BudgetsPage.jsx
-    LayawayPage.jsx
-    CardsPage.jsx
-    BankAccountsPage.jsx  accounts have their own transaction ledger (accountTransactions)
-    ForecastPage.jsx
-    AnalyticsPage.jsx
-    SettingsPage.jsx
-    AdminPage.jsx        Users tab (adminData.js) + Tags & Categories tab (catalog.js)
-
-  community/            the Community module (events calendar) — self-contained
+  community/            the events module
     CommunityModule.jsx  owns the live Firestore subscriptions, renders the active page
     events.js            Firestore layer for the communityEvents collection
     eventUtils.js        pure helpers: dates, categories, safeUrl(), form validation
@@ -72,36 +42,9 @@ src/
                          (promoter), ManagePage (admin: review, fees, featured)
 ```
 
-**Finding things**: a page's own subcomponents (rows, add-forms) live at the
-bottom of that page's file — e.g. `AddBillForm` is in
-[src/pages/BillsPage.jsx](src/pages/BillsPage.jsx). The one cross-page
-exception is `BillRow`, exported from `BillsPage.jsx` and reused by
-`Dashboard.jsx` when browsing a non-current month. Cross-page shared logic
-goes in `utils/`; cross-page shared UI goes in `components/ui/Primitives.jsx`.
-
 ## Data model
 
-Everything lives in one JSON blob (shape defined by `DEFAULT_DATA` in
-[src/utils/constants.js](src/utils/constants.js)), saved as a single Firestore
-document per user (`users/{uid}/strut/data`, see [src/storage.js](src/storage.js)):
-
-- `cards` — credit or debit cards, each with a starting balance/date
-- `bills` — recurring (monthly, by `dueDay`) or one-time (`dueDate`); can carry
-  a `categoryId`, `tagIds[]`, and `scheduledAmounts` (preloaded future-cycle amounts)
-- `billPayments` — keyed by month (`YYYY-MM`, or `once-<billId>`) → billId → payment record
-- `layaways` — installment plans ("festivals"), each with an `installments[]` array
-- `cardTransactions` — ledger for `cards`; every paid bill/installment auto-creates one
-- `bankAccounts` — checking/savings accounts, each reconciled via `balance`/`updatedDate`
-- `accountTransactions` — ledger for `bankAccounts`, mirrors `cardTransactions`
-- `budgets` — one per category, `{ categoryId, monthlyAmount }`
-- `incomes` — recurring paychecks, used only by the cash Forecast page
-- `settings` — dashboard reminder prefs
-
-A bill or transaction can be funded by *either* a card or a bank account — see
-`fundingSource`/`isBankAccountId` in [src/utils/funding.js](src/utils/funding.js),
-which resolve a single id across both collections.
-
-The **Community** module does not live in that blob. Events are individual docs
+Events are individual docs
 in a top-level `communityEvents/{id}` collection (see
 [src/community/events.js](src/community/events.js)), shared across users:
 
@@ -117,8 +60,6 @@ in a top-level `communityEvents/{id}` collection (see
   `ownerUid` through `userProfiles`.
 - All link fields (`imageUrl`, `ticketUrl`, `websiteUrl`) must be http(s) —
   enforced in the rules and by `safeUrl()`; use `safeUrl()` for any new href/src.
-- Which tabs belong to which module is decided by tab id (`COMMUNITY_TAB_IDS`
-  in `App.jsx`); the active module is derived from the current tab.
 - `firestore.rules` is **not** deployed by CI (Pages only builds the site) —
   rule changes must be published in the Firebase console or via the CLI.
 
@@ -126,14 +67,16 @@ The shared tag/category **catalog** (`{ categories: [], tags: [] }`) is a
 separate Firestore doc (`catalog/shared`, see [src/catalog.js](src/catalog.js)),
 readable by every signed-in user but writable only by an admin.
 
-All data mutations go through `update(fn)` in `App.jsx`, which deep-clones
-state via `structuredClone` before mutating — pages never call `setData`
-directly, they call action props passed down from `App.jsx`.
+The shared tag/category **catalog** (`{ categories: [], tags: [] }`) is a
+separate Firestore doc (`catalog/shared`, see [src/catalog.js](src/catalog.js)),
+readable by every signed-in user but writable only by an admin.
 
 ## Conventions
 
 - No TypeScript, no CSS modules — plain `.jsx` and one global `theme.css` using
-  CSS custom properties (`var(--rust)`, `var(--bottle)`, etc. for semantic tones).
+  CSS custom properties.
 - No test suite currently exists.
-- `canLoadDemoData` and admin-owner status are gated to a single owner email in
-  `AuthGate.jsx` — the demo-data button is a dev convenience, not a real feature.
+- Admin-owner status is tied to a single owner email in `AuthGate.jsx` and
+  `firestore.rules`.
+- Legacy: per-user finance documents (`users/{uid}/...`) from the old finance
+  app may still exist in Firestore. The app no longer reads them.
