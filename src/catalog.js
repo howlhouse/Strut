@@ -1,6 +1,6 @@
 // Firestore-backed storage for the shared tag/category catalog — one doc,
 // readable by every signed-in user, writable only by an admin (see
-// firestore.rules). Mirrors the get/set shape of storage.js.
+// firestore.rules).
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "./firebase.js";
 
